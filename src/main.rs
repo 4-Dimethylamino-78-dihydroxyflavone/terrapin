@@ -18,6 +18,7 @@ mod frame;
 mod geodesy;
 mod math;
 mod report;
+mod stage;
 
 use std::path::PathBuf;
 
@@ -89,6 +90,42 @@ enum Command {
         /// Write the cloud even if it does not overlap the cameras.
         #[arg(long)]
         allow_disjoint_cloud: bool,
+
+        /// Folders holding the original photographs, usually the card's DCIM.
+        /// Given these, the images the block needs are rebuilt from them.
+        #[arg(long, num_args = 1..)]
+        images: Vec<PathBuf>,
+
+        /// Stage the originals unchanged and carry the lens distortion in the
+        /// camera model, instead of undistorting the photographs.
+        #[arg(long)]
+        keep_distortion: bool,
+
+        /// JPEG quality for rebuilt images.
+        #[arg(long, default_value_t = 95)]
+        quality: u8,
+
+        /// How far a photograph may sit from a camera centre and still be
+        /// considered the same shot, in metres.
+        #[arg(long, default_value_t = 25.0)]
+        max_distance: f64,
+
+        /// Rewrite images that are already present.
+        #[arg(long)]
+        overwrite: bool,
+    },
+
+    /// Pair the original photographs with the block's poses and report,
+    /// without writing anything.
+    Match {
+        /// Anywhere inside the Terra project.
+        xml: PathBuf,
+        /// Folders holding the original photographs.
+        #[arg(long, num_args = 1.., required = true)]
+        images: Vec<PathBuf>,
+        /// How far a photograph may sit from a camera centre, in metres.
+        #[arg(long, default_value_t = 25.0)]
+        max_distance: f64,
     },
 
     /// Merge and decimate point-cloud tiles into a single PLY.
@@ -126,16 +163,33 @@ fn main() -> Result<()> {
             full_paths,
             force_pinhole,
             allow_disjoint_cloud,
+            images,
+            keep_distortion,
+            quality,
+            max_distance,
+            overwrite,
         } => cmd_export(
             &xml,
-            &out,
-            &format,
-            cloud.as_deref(),
-            max_points,
-            !full_paths,
-            force_pinhole,
-            allow_disjoint_cloud,
+            ExportRun {
+                out,
+                formats: format,
+                cloud,
+                max_points,
+                basenames: !full_paths,
+                force_pinhole,
+                allow_disjoint: allow_disjoint_cloud,
+                images,
+                keep_distortion,
+                quality,
+                max_distance,
+                overwrite,
+            },
         ),
+        Command::Match {
+            xml,
+            images,
+            max_distance,
+        } => cmd_match(&xml, &images, max_distance),
         Command::Cloud {
             dir,
             out,
@@ -156,6 +210,18 @@ fn warn(msg: &str) {
     eprintln!("\x1b[33m  warning: {msg}\x1b[0m");
 }
 
+/// Whether two photogroups describe the same physical camera.
+fn same_camera(a: &block::Photogroup, b: &block::Photogroup) -> bool {
+    a.width == b.width
+        && a.height == b.height
+        && a.fx.to_bits() == b.fx.to_bits()
+        && a.fy.to_bits() == b.fy.to_bits()
+        && a.cx.to_bits() == b.cx.to_bits()
+        && a.cy.to_bits() == b.cy.to_bits()
+        && a.distortion == b.distortion
+        && a.orientation == b.orientation
+}
+
 fn describe_block(block: &Block, stats: &block::ParseStats, verbose: bool) {
     rule("block");
     if !block.name.is_empty() {
@@ -168,7 +234,21 @@ fn describe_block(block: &Block, stats: &block::ParseStats, verbose: bool) {
             println!("  spatial reference {} {}", s.name, s.definition);
         }
     }
-    println!("  photogroups       {}", block.groups.len());
+    let cameras = {
+        let mut seen: Vec<&block::Photogroup> = Vec::new();
+        for g in &block.groups {
+            if !seen.iter().any(|r| same_camera(r, g)) {
+                seen.push(g);
+            }
+        }
+        seen.len()
+    };
+    println!(
+        "  photogroups       {} ({} distinct camera{})",
+        block.groups.len(),
+        cameras,
+        if cameras == 1 { "" } else { "s" }
+    );
     println!(
         "  posed photos      {} of {} seen",
         block.photos.len(),
@@ -189,8 +269,23 @@ fn describe_block(block: &Block, stats: &block::ParseStats, verbose: bool) {
         e.x, e.y, e.z
     );
 
+    // Terra writes one photogroup per photograph when every frame shares a
+    // camera, so a block of 1680 images describes the same lens 1680 times.
+    // Printing all of them buries the one line that decides the workflow.
+    let mut distinct: Vec<(&block::Photogroup, usize)> = Vec::new();
     for g in &block.groups {
-        rule(&format!("photogroup {} — {}", g.index, g.name));
+        match distinct.iter_mut().find(|(r, _)| same_camera(r, g)) {
+            Some((_, n)) => *n += 1,
+            None => distinct.push((g, 1)),
+        }
+    }
+
+    for (g, count) in &distinct {
+        if *count > 1 {
+            rule(&format!("camera — {count} photogroups share it"));
+        } else {
+            rule(&format!("photogroup {} — {}", g.index, g.name));
+        }
         println!("  image size        {} x {}", g.width, g.height);
         println!("  focal (px)        {:.4}  /  {:.4}", g.fx, g.fy);
         println!("  principal point   {:.4}, {:.4}", g.cx, g.cy);
@@ -247,17 +342,40 @@ fn cmd_inspect(given: &std::path::Path, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn cmd_export(
-    given: &std::path::Path,
-    out: &std::path::Path,
-    formats: &[Format],
-    cloud_dir: Option<&std::path::Path>,
+struct ExportRun {
+    out: PathBuf,
+    formats: Vec<Format>,
+    cloud: Option<PathBuf>,
     max_points: usize,
     basenames: bool,
     force_pinhole: bool,
     allow_disjoint: bool,
-) -> Result<()> {
+    images: Vec<PathBuf>,
+    keep_distortion: bool,
+    quality: u8,
+    max_distance: f64,
+    overwrite: bool,
+}
+
+fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
+    let ExportRun {
+        out,
+        formats,
+        cloud: cloud_arg,
+        max_points,
+        basenames,
+        force_pinhole,
+        allow_disjoint,
+        images,
+        keep_distortion,
+        quality,
+        max_distance,
+        overwrite,
+    } = run;
+    let out = out.as_path();
+    let formats = formats.as_slice();
+    let cloud_dir = cloud_arg.as_deref();
+
     let found = find::block_xml(given)?;
     let xml = found.path();
     let (mut block, stats) = block::parse_file(xml)?;
@@ -271,6 +389,22 @@ fn cmd_export(
     println!("  {}", local.describe());
     let e = block.extent();
     println!("  extent            {:.2} x {:.2} x {:.2} m", e.x, e.y, e.z);
+
+    // ---- the images themselves ------------------------------------------
+    if !images.is_empty() {
+        let at = xml.parent().unwrap_or(std::path::Path::new("."));
+        stage_images(
+            &mut block,
+            &local,
+            at,
+            &images,
+            out,
+            keep_distortion,
+            quality,
+            max_distance,
+            overwrite,
+        )?;
+    }
 
     let needs_geo = formats.iter().any(|f| f.needs_georeference());
     if needs_geo && !local.is_georeferenced() {
@@ -297,9 +431,11 @@ fn cmd_export(
             bail!("every cloud tile was unreadable");
         }
 
-        c.transform(|p| local.point(p));
-
         let camera_centroid = block.centroid();
+        let anchor = cloud::read_anchor(dir);
+        let placed = cloud::place(&mut c, &local, anchor, camera_centroid);
+        println!("  read as           {}", placed.label);
+
         let offset = c.centroid_offset_from(camera_centroid);
         let scale = block.extent().max_element().max(1.0);
         let ce = c.extent();
@@ -373,6 +509,183 @@ fn cmd_export(
         out.join("images").display(),
         out.display()
     );
+    Ok(())
+}
+
+/// Pair the block's poses with the photographs on the card and report how well
+/// they line up, without writing anything.
+fn describe_match(
+    block: &Block,
+    m: &stage::MatchReport,
+    images: &[stage::SourceImage],
+    skipped: usize,
+    card: Option<stage::CardCheck>,
+) {
+    rule("photographs");
+    println!("  found             {}", images.len());
+    if skipped > 0 {
+        println!("  without GPS       {skipped} (skipped)");
+    }
+    let fixed = stage::rtk_fixed_count(images);
+    println!(
+        "  RTK fixed         {} of {}",
+        fixed,
+        images.len()
+    );
+    if let Some(c) = card {
+        println!("  aircraft logged   {} captures", c.captured);
+        if !c.missing.is_empty() {
+            let shown: Vec<String> = c.missing.iter().take(6).map(|i| i.to_string()).collect();
+            warn(&format!(
+                "{} capture(s) never reached the card (index {}{}); \
+                 those poses cannot be matched and that is not a fault of the pairing",
+                c.missing.len(),
+                shown.join(", "),
+                if c.missing.len() > shown.len() { ", ..." } else { "" }
+            ));
+        }
+    }
+    println!("  matched to poses  {} of {}", m.matched, block.photos.len());
+    if m.unmatched > 0 {
+        warn(&format!(
+            "{} pose(s) had no photograph within range and will be left out",
+            m.unmatched
+        ));
+    }
+    if m.surplus_images > 0 {
+        println!("  unused photos     {}", m.surplus_images);
+    }
+    println!("  median offset     {:.2} m", m.median_distance_m);
+    println!("  worst offset      {:.2} m", m.worst_distance_m);
+
+    // Shots are ~23 m apart on a normal grid flight while GNSS error is a
+    // couple of metres, so a median in the tens of metres means the pairing has
+    // slipped rather than that the GPS is poor.
+    if m.median_distance_m > 10.0 {
+        warn(
+            "photographs are sitting further from their poses than GNSS error explains; \
+             check that --images points at this flight and not another one",
+        );
+    } else {
+        println!("  \x1b[36m→ photographs line up with the solved positions\x1b[0m");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stage_images(
+    block: &mut Block,
+    local: &LocalFrame,
+    at_dir: &std::path::Path,
+    images: &[PathBuf],
+    out: &std::path::Path,
+    keep_distortion: bool,
+    quality: u8,
+    max_distance: f64,
+    overwrite: bool,
+) -> Result<()> {
+    let calib = stage::calibration_from_report(at_dir)?;
+
+    let (found, skipped) = stage::scan_images(images)?;
+    let card = stage::check_against_mrk(images, &found);
+    let m = stage::match_by_position(block, local, &found, max_distance)?;
+    describe_match(block, &m, &found, skipped, card);
+
+    rule("images");
+    let opts = stage::StageOptions {
+        out_dir: out,
+        jpeg_quality: quality,
+        overwrite,
+    };
+
+    let report = if keep_distortion {
+        let Some(c) = calib else {
+            bail!(
+                "--keep-distortion needs the lens the block was solved with, and it is \
+                 recorded in AT/report/report.md, which could not be read here.\n\
+                 Without it the originals would be paired with a camera model that \
+                 describes a different lens. Omit --keep-distortion to rebuild \
+                 undistorted images instead."
+            );
+        };
+        println!("  staging the originals unchanged, distortion carried in the camera");
+        // The XML describes Terra's virtual pinhole; the originals need the real
+        // lens instead. Poses are untouched: they belong to the camera body.
+        for g in &mut block.groups {
+            g.fx = c.focal;
+            g.fy = c.focal;
+            g.cx = c.cx;
+            g.cy = c.cy;
+            g.distortion = block::Distortion {
+                k1: c.k1,
+                k2: c.k2,
+                k3: c.k3,
+                p1: c.p1,
+                p2: c.p2,
+            };
+        }
+        stage::copy_originals_into(block, &m, &opts)?
+    } else {
+        let Some(c) = calib else {
+            bail!(
+                "the block expects undistorted images, and the lens needed to make them \
+                 is recorded in AT/report/report.md, which could not be read here.\n\
+                 Re-run with --keep-distortion to use the original photographs as shot \
+                 instead — that path resamples nothing and is always safe."
+            );
+        };
+        if c.is_negligible() {
+            warn("the report records no distortion, so the rebuilt images are copies");
+        }
+        println!(
+            "  rebuilding undistorted images (K1 {:.6}, K2 {:.6}, K3 {:.6})",
+            c.k1, c.k2, c.k3
+        );
+        stage::undistort_into(block, &m, c, &opts)?
+    };
+
+    println!("  written           {}", thousands(report.written));
+    if report.skipped_existing > 0 {
+        println!(
+            "  already present   {} (use --overwrite to replace)",
+            thousands(report.skipped_existing)
+        );
+    }
+    for (p, e) in report.failed.iter().take(5) {
+        warn(&format!(
+            "{}: {e}",
+            p.file_name().unwrap_or_default().to_string_lossy()
+        ));
+    }
+    if report.failed.len() > 5 {
+        warn(&format!("and {} more", report.failed.len() - 5));
+    }
+    if !keep_distortion {
+        println!("  outside the frame {:.1}%", report.mean_out_of_bounds * 100.0);
+        // A sign error or a wrong convention sends most of the output off the
+        // edge of the source. Correct lens correction loses only the corners.
+        if report.mean_out_of_bounds > 0.15 {
+            warn(
+                "much of each rebuilt image sampled from outside the original, which \
+                 usually means the distortion model does not match these photographs",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_match(given: &std::path::Path, images: &[PathBuf], max_distance: f64) -> Result<()> {
+    let found_xml = find::block_xml(given)?;
+    announce(&found_xml);
+    let (mut block, stats) = block::parse_file(found_xml.path())?;
+    describe_block(&block, &stats, false);
+    block.normalize_orientation();
+    let local = LocalFrame::build_and_apply(&mut block);
+
+    let (found, skipped) = stage::scan_images(images)?;
+    let card = stage::check_against_mrk(images, &found);
+    let m = stage::match_by_position(&block, &local, &found, max_distance)?;
+    describe_match(&block, &m, &found, skipped, card);
+    println!("\n  (match only — nothing written)\n");
     Ok(())
 }
 

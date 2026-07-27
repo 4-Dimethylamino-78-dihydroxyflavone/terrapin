@@ -12,11 +12,32 @@
 //! camera *rotations* have to be corrected too, not just the positions:
 //! rotating the world under a fixed camera changes the camera's orientation
 //! within it.
+//!
+//! A projected block is the awkward case, and the temptation there has to be
+//! named to be resisted. Terra solved such a block in grid metres, so moving
+//! it into the working frame is a subtraction and nothing else. But the SRS
+//! usually names a UTM zone, and once the zone is known every camera centre
+//! *could* be pushed through UTM to geodetic to a properly levelled ENU
+//! frame. Doing that would be wrong. UTM's scale factor is 0.9996 on the
+//! central meridian and grows past unity towards the zone edges, so the grid
+//! is not the metric space it resembles: converting out of it stretches the
+//! block by up to about 0.04% — some 40 cm across a kilometre — and stretches
+//! it *unevenly*, which no rigid transform can undo. The result still looks
+//! like a photogrammetric block and still trains; it is simply a worse solve
+//! than the one Terra handed over, with no error message and nothing in the
+//! output to point at.
+//!
+//! So the zone is kept as an *anchor*, not as a transform. It is enough to
+//! say where on the earth the block sits, to drag a foreign point cloud into
+//! the block's coordinates, and to match a photo's GPS position to a pose —
+//! and the camera centres stay exactly where subtraction put them.
 
 use serde::Serialize;
 
 use crate::block::Block;
-use crate::geodesy::{ecef_to_geodetic, enu_rotation, geodetic_to_ecef};
+use crate::geodesy::{
+    ecef_to_geodetic, enu_rotation, geodetic_to_ecef, geodetic_to_utm, utm_to_geodetic, Utm,
+};
 use crate::math::{Mat3, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -86,6 +107,10 @@ pub struct LocalFrame {
     pub lat0: f64,
     pub lon0: f64,
     pub h0: f64,
+    /// Set when the block is projected and the zone was recognised. This is
+    /// the block's geodetic anchor; it is deliberately *not* part of the
+    /// transform applied to the cameras.
+    pub utm: Option<Utm>,
     #[serde(skip)]
     rot: Mat3,
 }
@@ -116,6 +141,7 @@ impl LocalFrame {
                     lat0,
                     lon0,
                     h0,
+                    utm: None,
                     rot: enu_rotation(lat0, lon0),
                 }
             }
@@ -129,10 +155,14 @@ impl LocalFrame {
                     lat0,
                     lon0,
                     h0,
+                    utm: None,
                     rot: enu_rotation(lat0, lon0),
                 }
             }
             SourceFrame::Projected => {
+                // Subtraction and identity rotation, exactly as before. The
+                // zone is read alongside, never applied: see the module
+                // header for what routing the centres through UTM would cost.
                 let origin = block.centroid();
                 Self {
                     source,
@@ -141,6 +171,7 @@ impl LocalFrame {
                     lat0: f64::NAN,
                     lon0: f64::NAN,
                     h0: f64::NAN,
+                    utm: Utm::parse(&block.srs_blob()),
                     rot: Mat3::IDENTITY,
                 }
             }
@@ -189,16 +220,63 @@ impl LocalFrame {
     }
 
     /// Map a local-frame point back to geodetic (lat, lon, height).
-    /// Returns `None` for projected blocks, where the CRS is unknown to us.
+    ///
+    /// Returns `None` for a projected block whose zone could not be
+    /// recognised, because then nothing in the file says where on the earth
+    /// those grid metres are.
+    ///
+    /// The height a projected block reports is passed straight through from
+    /// the block's own vertical axis. Terra does not state whether that is
+    /// ellipsoidal or orthometric, so this is the block's height, not a
+    /// WGS84 ellipsoidal height — the horizontal position is authoritative,
+    /// the vertical carries whatever datum the survey used.
     pub fn to_geodetic(&self, local: Vec3) -> Option<(f64, f64, f64)> {
-        let o = self.origin_ecef?;
-        let origin = Vec3::new(o[0], o[1], o[2]);
-        let ecef = origin + self.rot.transpose() * local;
-        Some(ecef_to_geodetic(ecef))
+        match self.source {
+            SourceFrame::Projected => {
+                let zone = self.utm?;
+                let o = self.origin_source?;
+                let (lat, lon) = utm_to_geodetic(local.x + o[0], local.y + o[1], zone);
+                Some((lat, lon, local.z + o[2]))
+            }
+            SourceFrame::Geographic | SourceFrame::Ecef => {
+                let o = self.origin_ecef?;
+                let origin = Vec3::new(o[0], o[1], o[2]);
+                let ecef = origin + self.rot.transpose() * local;
+                Some(ecef_to_geodetic(ecef))
+            }
+        }
     }
 
+    /// Map a geodetic position into the working local frame.
+    /// None when the frame has no geodetic anchor (projected, unknown zone).
+    ///
+    /// This is the inverse of [`to_geodetic`](Self::to_geodetic) and the hinge
+    /// on which two later stages turn: bringing a cloud that arrived in
+    /// degrees into the block's coordinates, and matching an original photo's
+    /// GPS position to the pose that belongs to it. Both compare distances in
+    /// the local frame, so both need the same map, computed the same way.
+    pub fn geodetic_to_local(&self, lat_deg: f64, lon_deg: f64, h: f64) -> Option<Vec3> {
+        match self.source {
+            SourceFrame::Projected => {
+                // Into the grid the block already lives in, then the same
+                // subtraction the cameras got. No rotation, no rescaling.
+                let zone = self.utm?;
+                let o = self.origin_source?;
+                let (easting, northing) = geodetic_to_utm(lat_deg, lon_deg, zone);
+                Some(Vec3::new(easting - o[0], northing - o[1], h - o[2]))
+            }
+            SourceFrame::Geographic | SourceFrame::Ecef => {
+                let o = self.origin_ecef?;
+                let origin = Vec3::new(o[0], o[1], o[2]);
+                Some(self.rot * (geodetic_to_ecef(lat_deg, lon_deg, h) - origin))
+            }
+        }
+    }
+
+    /// Whether the block can be placed on the earth. A recognised UTM zone
+    /// counts: it anchors the block even though it never moves it.
     pub fn is_georeferenced(&self) -> bool {
-        self.origin_ecef.is_some()
+        self.origin_ecef.is_some() || self.utm.is_some()
     }
 
     pub fn describe(&self) -> String {
@@ -213,10 +291,19 @@ impl LocalFrame {
             ),
             SourceFrame::Projected => {
                 let o = self.origin_source.unwrap_or([0.0; 3]);
-                format!(
-                    "projected -> recentred on ({:.3}, {:.3}, {:.3})",
-                    o[0], o[1], o[2]
-                )
+                match self.utm {
+                    Some(zone) => format!(
+                        "projected {} -> recentred on ({:.3}, {:.3}, {:.3})",
+                        zone.label(),
+                        o[0],
+                        o[1],
+                        o[2]
+                    ),
+                    None => format!(
+                        "projected -> recentred on ({:.3}, {:.3}, {:.3}), zone unrecognised",
+                        o[0], o[1], o[2]
+                    ),
+                }
             }
         }
     }
@@ -274,6 +361,49 @@ mod tests {
             }
         }
         (b, truth)
+    }
+
+    /// The Quarry site's own grid origin, in UTM zone 56S metres — the number
+    /// Terra recentred that block on. Paired with (-34.254729862,
+    /// 150.591903267) in geodesy's tests, so the two modules can be checked
+    /// against each other rather than against themselves.
+    const QUARRY_EASTING: f64 = 278_265.818;
+    const QUARRY_NORTHING: f64 = 6_206_860.195;
+    const QUARRY_LAT: f64 = -34.254_729_862;
+    const QUARRY_LON: f64 = 150.591_903_267;
+
+    /// A projected block sitting on the Quarry grid. `srs` is the Definition
+    /// string Terra would have written, or `None` for a block that declares
+    /// no spatial reference at all.
+    fn projected_block(srs: Option<&str>) -> Block {
+        let mut b = Block {
+            groups: vec![group()],
+            ..Default::default()
+        };
+        if let Some(definition) = srs {
+            b.srs.push(crate::block::Srs {
+                id: "0".into(),
+                name: "WGS 84 / UTM zone 56S".into(),
+                definition: definition.into(),
+            });
+        }
+        // 3x3 flight grid, symmetric about the origin so the centroid is the
+        // grid origin itself and the geodetic checks below have a known answer.
+        for i in 0..9u32 {
+            let (gx, gy) = ((i % 3) as f64 - 1.0, (i / 3) as f64 - 1.0);
+            b.photos.push(Photo {
+                id: i,
+                group: 0,
+                path: format!("DJI_{i:04}.JPG"),
+                r: Mat3::from_opk(3.0, -2.0, 91.0).orthonormalize(),
+                c: Vec3::new(
+                    QUARRY_EASTING + gx * 137.5,
+                    QUARRY_NORTHING + gy * 137.5,
+                    453.305 + i as f64 * 0.7,
+                ),
+            });
+        }
+        b
     }
 
     #[test]

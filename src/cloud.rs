@@ -18,6 +18,7 @@ use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
+use crate::frame::LocalFrame;
 use crate::math::Vec3;
 
 #[derive(Clone, Debug, Default)]
@@ -165,6 +166,148 @@ pub fn load_dir(dir: &Path, per_tile_cap: Option<usize>) -> Result<Cloud> {
         .collect();
 
     Ok(Cloud::merge(parts))
+}
+
+// ---------------------------------------------------------------------------
+// Getting a cloud into the block's frame
+// ---------------------------------------------------------------------------
+
+/// The geodetic anchor Terra records beside its tiles.
+#[derive(Clone, Copy, Debug)]
+pub struct Anchor {
+    pub lon: f64,
+    pub lat: f64,
+    pub h: f64,
+}
+
+/// Read `metadata.xml` from a tile directory, or from one level above the
+/// tiles, which is where Terra actually puts it.
+///
+/// The file is UTF-16 with a byte-order mark. Reading it as UTF-8 yields
+/// alternating NUL bytes and no matches, which looks exactly like a file that
+/// does not contain an anchor rather than one that could not be read.
+pub fn read_anchor(dir: &Path) -> Option<Anchor> {
+    let mut candidates = vec![dir.join("metadata.xml")];
+    if let Some(p) = dir.parent() {
+        candidates.push(p.join("metadata.xml"));
+    }
+
+    for path in candidates {
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let text = decode_maybe_utf16(&bytes);
+        let Some(at) = text.find("<SRSOrigin>") else { continue };
+        let rest = &text[at + "<SRSOrigin>".len()..];
+        let Some(end) = rest.find("</SRSOrigin>") else { continue };
+        let nums: Vec<f64> = rest[..end]
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        if nums.len() >= 3 {
+            // Terra writes this as longitude, latitude, height.
+            return Some(Anchor { lon: nums[0], lat: nums[1], h: nums[2] });
+        }
+    }
+    None
+}
+
+fn decode_maybe_utf16(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 {
+        let (le, be) = (bytes[0] == 0xFF && bytes[1] == 0xFE, bytes[0] == 0xFE && bytes[1] == 0xFF);
+        if le || be {
+            let units: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) })
+                .collect();
+            return String::from_utf16_lossy(&units);
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// How a cloud's raw coordinates relate to the block's.
+pub struct Placement {
+    pub label: &'static str,
+}
+
+/// Put a cloud into the block's working frame.
+///
+/// Terra emits its cloud in a frame unrelated to the one it solved the block
+/// in — the LAS tiles in raw geographic degrees, the mesh tiles as degree
+/// offsets from an anchor buried in a UTF-16 `metadata.xml`. Neither is
+/// declared anywhere the block can see, and neither can be assumed: a cloud
+/// written by a different Terra version may be in the block's own coordinates
+/// already.
+///
+/// Rather than guess, every plausible reading is applied to a sample and the
+/// one that lands on the cameras wins. Longitude/latitude order is resolved
+/// the same way, because it genuinely varies and picking by convention would
+/// mirror the scene about the diagonal while still "working".
+pub fn place(
+    cloud: &mut Cloud,
+    frame: &LocalFrame,
+    anchor: Option<Anchor>,
+    cameras: Vec3,
+) -> Placement {
+    type Candidate = (&'static str, Box<dyn Fn(Vec3) -> Option<Vec3> + Sync>);
+    let mut candidates: Vec<Candidate> = Vec::new();
+
+    let f = *frame;
+    candidates.push(("the block's own coordinates", Box::new(move |p| Some(f.point(p)))));
+
+    // Absolute degrees, both axis orders.
+    candidates.push((
+        "geographic degrees (x=longitude)",
+        Box::new(move |p| f.geodetic_to_local(p.y, p.x, p.z)),
+    ));
+    candidates.push((
+        "geographic degrees (x=latitude)",
+        Box::new(move |p| f.geodetic_to_local(p.x, p.y, p.z)),
+    ));
+
+    if let Some(a) = anchor {
+        candidates.push((
+            "degree offsets from the tiles' anchor (x=longitude)",
+            Box::new(move |p| f.geodetic_to_local(p.y + a.lat, p.x + a.lon, p.z + a.h)),
+        ));
+        candidates.push((
+            "degree offsets from the tiles' anchor (x=latitude)",
+            Box::new(move |p| f.geodetic_to_local(p.x + a.lat, p.y + a.lon, p.z + a.h)),
+        ));
+    }
+
+    // Judge on a stride through the whole cloud rather than the first points,
+    // which in a tiled write all come from one corner.
+    let n = cloud.points.len().max(1);
+    let step = (n / 2000).max(1);
+    let sample: Vec<Vec3> = cloud.points.iter().step_by(step).copied().collect();
+
+    let mut best: Option<(usize, f64)> = None;
+    for (i, (_, f)) in candidates.iter().enumerate() {
+        let mut sum = Vec3::ZERO;
+        let mut count = 0usize;
+        for p in &sample {
+            if let Some(q) = f(*p) {
+                if q.is_finite() {
+                    sum = sum + q;
+                    count += 1;
+                }
+            }
+        }
+        if count == 0 {
+            continue;
+        }
+        let d = (sum / count as f64 - cameras).length();
+        if best.map(|(_, bd)| d < bd).unwrap_or(true) {
+            best = Some((i, d));
+        }
+    }
+
+    // The caller measures the real offset against the whole cloud; this only
+    // has to pick the reading.
+    let (idx, _) = best.unwrap_or((0, f64::INFINITY));
+    let (label, chosen) = &candidates[idx];
+    cloud.transform(|p| chosen(p).unwrap_or(p));
+    Placement { label }
 }
 
 pub fn load_file(path: &Path, cap: Option<usize>) -> Result<Cloud> {
