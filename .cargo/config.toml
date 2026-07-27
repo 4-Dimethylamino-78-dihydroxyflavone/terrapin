@@ -1,0 +1,9 @@
+# Link the C runtime statically on Windows.
+#
+# Without this the executable needs vcruntime140.dll from the Visual C++
+# redistributable. That is present on most machines and absent on exactly the
+# machine you did not expect, where it fails at launch with a dialog naming a
+# DLL rather than anything about photogrammetry. Copying one file to a
+# colleague's laptop should just work.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -13,13 +13,31 @@ pose.
 CSV — so the alignment can drive a Gaussian-splat trainer, a GIS, or a mesher,
 without a Terra licence and without re-running structure from motion.
 
+## If you have never used a terminal
+
+Double-click `terrapin.exe`, or drag the Terra project folder onto it. It asks
+a handful of questions in plain language, works out for itself where the
+photographs and the point cloud are, and tells you what it is about to do
+before it does it. Enter takes the safe answer to everything.
+
+At the end it prints the command your answers came to, so the second time you
+can skip the questions if you want to. There is no separate code path behind
+the walkthrough — it fills in the same options the flags below set.
+
+The window stays open when it finishes or fails, which console programs
+launched from Explorer otherwise do not: Windows destroys the window the
+instant the process exits, taking the error message with it.
+
 ## Build
 
 ```
 cargo build --release
 ```
 
-No system dependencies, no PROJ, no GDAL. Builds on rustc 1.75+.
+No system dependencies, no PROJ, no GDAL, no Python, no CUDA. Builds on rustc
+1.75+. On Windows the C runtime is linked statically, so the result is a single
+file that depends on nothing but Windows itself — copy `terrapin.exe` to
+another machine and it runs.
 
 ## Use
 

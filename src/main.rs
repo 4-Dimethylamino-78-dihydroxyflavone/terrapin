@@ -19,6 +19,8 @@ mod geodesy;
 mod math;
 mod report;
 mod stage;
+mod ui;
+mod wizard;
 
 use std::path::PathBuf;
 
@@ -172,7 +174,82 @@ enum Command {
     },
 }
 
+/// Whether this was a double-click, or a folder dropped onto the executable,
+/// rather than a command.
+///
+/// Explorer passes no arguments in the first case and exactly one existing
+/// directory in the second. Neither is a subcommand, so without this clap
+/// answers a beginner's very first attempt with a usage error and — the window
+/// being owned by the process — closes before it can be read.
+fn wizard_invocation() -> Option<Option<PathBuf>> {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    match args.len() {
+        0 => Some(None),
+        1 => {
+            let p = PathBuf::from(&args[0]);
+            if p.is_dir() {
+                Some(Some(p))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn run_wizard(start: Option<PathBuf>) -> Result<()> {
+    // The guided path needs somewhere to ask questions. Reached through a pipe
+    // or a scheduled task there is no such place, and failing on the first
+    // prompt with "not a terminal" explains nothing about what to do instead.
+    if !console::user_attended() {
+        anyhow::bail!(
+            "the guided walkthrough needs a console to ask questions in, and this run \
+             has none.\n\
+             Double-click terrapin to use it, or give it a command directly, for example:\n  \
+             terrapin export <project folder> --out <output folder> --format colmap-bin"
+        );
+    }
+
+    let Some(plan) = wizard::plan(start)? else {
+        println!("\n  Nothing was written.\n");
+        return Ok(());
+    };
+    cmd_export(
+        &plan.project,
+        ExportRun {
+            up: plan.up,
+            out: plan.out.clone(),
+            formats: plan.formats.clone(),
+            cloud: plan.cloud.clone(),
+            max_points: 300_000,
+            basenames: true,
+            force_pinhole: false,
+            allow_disjoint: false,
+            images: plan.images.clone(),
+            keep_distortion: plan.keep_distortion,
+            quality: 95,
+            max_distance: 25.0,
+            overwrite: false,
+        },
+    )?;
+    wizard::show_equivalent(&plan);
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    ui::init();
+
+    if let Some(start) = wizard_invocation() {
+        let outcome = run_wizard(start);
+        if let Err(e) = &outcome {
+            // Printed here rather than returned, so anyhow does not print it a
+            // second time after the pause has already been read and dismissed.
+            eprintln!("\n{}", ui::red(&format!("Stopped: {e:#}")));
+        }
+        ui::pause();
+        std::process::exit(if outcome.is_ok() { 0 } else { 1 });
+    }
+
     let cli = Cli::parse();
     match cli.command {
         Command::Inspect { xml, verbose } => cmd_inspect(&xml, verbose),
@@ -226,12 +303,12 @@ fn main() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn rule(title: &str) {
-    println!("\n\x1b[1m{title}\x1b[0m");
-    println!("{}", "-".repeat(title.len().max(20)));
+    println!("\n{}", ui::bold(title));
+    println!("{}", "-".repeat(title.chars().count().max(20)));
 }
 
 fn warn(msg: &str) {
-    eprintln!("\x1b[33m  warning: {msg}\x1b[0m");
+    eprintln!("{}", ui::yellow(&format!("  warning: {msg}")));
 }
 
 /// Whether two photogroups describe the same physical camera.
@@ -321,9 +398,15 @@ fn describe_block(block: &Block, stats: &block::ParseStats, verbose: bool) {
         );
         println!("                    P1 {:.6e}  P2 {:.6e}", d.p1, d.p2);
         if d.is_negligible() {
-            println!("  \x1b[36m→ distortion is zeroed: this block expects UNDISTORTED images\x1b[0m");
+            println!(
+                "  {}",
+                ui::cyan("→ distortion is zeroed: this block expects UNDISTORTED images")
+            );
         } else {
-            println!("  \x1b[36m→ distortion present: this block expects the ORIGINAL images\x1b[0m");
+            println!(
+                "  {}",
+                ui::cyan("→ distortion present: this block expects the ORIGINAL images")
+            );
         }
 
         let (dx, dy) = g.principal_offset_fraction();
@@ -351,7 +434,7 @@ fn describe_block(block: &Block, stats: &block::ParseStats, verbose: bool) {
 /// the user typed. Quietly substituting a different file would trade one
 /// confusion for a worse one.
 fn announce(found: &find::Found) {
-    println!("\n\x1b[1m{}\x1b[0m", found.path().display());
+    println!("\n{}", ui::bold(&found.path().display().to_string()));
     if matches!(found, find::Found::Discovered(_)) {
         println!("  (found from the folder you pointed at)");
     }
@@ -486,7 +569,7 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
                 );
             }
         } else {
-            println!("  \x1b[36m→ cloud overlaps the cameras\x1b[0m");
+            println!("  {}", ui::cyan("→ cloud overlaps the cameras"));
         }
 
         c.decimate(max_points);
@@ -513,7 +596,10 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
             c.transform(|p| r * p);
         }
         println!("  {}", up.label());
-        println!("  \x1b[36m→ georeference.json records this, so it can be undone\x1b[0m");
+        println!(
+            "  {}",
+            ui::cyan("→ georeference.json records this, so it can be undone")
+        );
     }
 
     // ---- write -----------------------------------------------------------
@@ -620,7 +706,10 @@ fn describe_match(
              check that --images points at this flight and not another one",
         );
     } else {
-        println!("  \x1b[36m→ photographs line up with the solved positions\x1b[0m");
+        println!(
+            "  {}",
+            ui::cyan("→ photographs line up with the solved positions")
+        );
     }
 }
 
