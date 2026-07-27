@@ -80,6 +80,7 @@ fn scan(root: &Path, depth: usize) -> Vec<PathBuf> {
 /// What the search had to do, so the caller can tell the user how a path they
 /// did not type was arrived at. Silently substituting a different file would be
 /// worse than the error it replaces.
+#[derive(Debug)]
 pub enum Found {
     /// The user named the file exactly.
     AsGiven(PathBuf),
@@ -89,12 +90,6 @@ pub enum Found {
 
 impl Found {
     pub fn path(&self) -> &Path {
-        match self {
-            Self::AsGiven(p) | Self::Discovered(p) => p,
-        }
-    }
-
-    pub fn into_path(self) -> PathBuf {
         match self {
             Self::AsGiven(p) | Self::Discovered(p) => p,
         }
