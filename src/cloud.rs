@@ -66,6 +66,17 @@ impl Cloud {
         (self.centroid() - other).length()
     }
 
+    /// Whether the tiles carried real colour, or every point fell back to grey.
+    ///
+    /// Terra's mesh tiles keep colour in their textures rather than on the
+    /// vertices, so a cloud loaded from `terra_ply` is uniformly grey while a
+    /// cloud from `terra_las_1_4` is not. That is worth saying out loud: a grey
+    /// initialisation cloud is not broken, but it looks broken in a viewer and
+    /// the coloured alternative is usually sitting right beside it.
+    pub fn has_color(&self) -> bool {
+        self.colors.iter().any(|c| *c != DEFAULT_COLOR)
+    }
+
     /// Apply a transform to every point, in parallel.
     pub fn transform<F>(&mut self, f: F)
     where

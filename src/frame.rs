@@ -96,6 +96,65 @@ impl SourceFrame {
     }
 }
 
+/// Which axis the caller wants pointing at the sky.
+///
+/// Photogrammetry, GIS and COLMAP all put up on +Z, and a georeferenced block
+/// arrives that way for free: an east-north-up frame *is* Z-up, and so is a
+/// UTM grid. Real-time viewers, glTF, three.js and most NeRF tooling put up on
+/// +Y instead, so a Z-up cloud lands on its side in them.
+///
+/// Note what is not happening here. Tools without georeferencing have to
+/// *infer* gravity — from a ground plane, or from the null space of the camera
+/// axes — and those estimates fail on the captures that least resemble their
+/// assumptions. Nothing is being estimated here. The block was placed by its
+/// own coordinate reference system, so which way is up is known exactly, and
+/// this is a relabelling of axes rather than a correction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpAxis {
+    /// East-north-up, as the CRS defines it. What COLMAP and GIS expect.
+    #[default]
+    Z,
+    /// +Y up, -Z north. What glTF, three.js and most viewers expect.
+    Y,
+}
+
+impl UpAxis {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Z => "Z up (east, north, up)",
+            Self::Y => "Y up (east, up, south)",
+        }
+    }
+
+    /// The rotation taking the working frame into this convention.
+    pub fn rotation(self) -> Mat3 {
+        match self {
+            Self::Z => Mat3::IDENTITY,
+            // up -> +Y, north -> -Z, east stays +X. Determinant +1, so this is
+            // a rotation and not a reflection: a mirrored scene would train
+            // perfectly happily and be wrong in a way nothing downstream flags.
+            Self::Y => Mat3::from_rows([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]]),
+        }
+    }
+}
+
+/// Re-express a block in a different up-axis convention.
+///
+/// Camera *rotations* move too, not just centres. Turning the world under a
+/// fixed camera changes that camera's orientation within it, and forgetting the
+/// second half leaves poses that point somewhere plausible and wrong.
+pub fn apply_up_axis(block: &mut Block, up: UpAxis) {
+    let r = up.rotation();
+    if r == Mat3::IDENTITY {
+        return;
+    }
+    for photo in &mut block.photos {
+        photo.c = r * photo.c;
+        photo.r = photo.r * r.transpose();
+    }
+}
+
 /// The transform from source coordinates into the working local frame.
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct LocalFrame {
@@ -306,6 +365,73 @@ impl LocalFrame {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod up_axis_tests {
+    use super::*;
+    use crate::block::Photo;
+
+    #[test]
+    fn y_up_sends_the_vertical_to_y_and_is_a_rotation() {
+        let r = UpAxis::Y.rotation();
+        assert_eq!(r * Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 0.0), "up");
+        assert_eq!(r * Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), "east");
+        assert_eq!(r * Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, -1.0), "north");
+        // A reflection here would mirror the scene, which trains without
+        // complaint and is wrong.
+        assert!((r.det() - 1.0).abs() < 1e-12, "not a proper rotation");
+    }
+
+    #[test]
+    fn z_up_changes_nothing_at_all() {
+        assert_eq!(UpAxis::Z.rotation(), Mat3::IDENTITY);
+        let mut b = Block {
+            groups: vec![],
+            photos: vec![Photo {
+                id: 0,
+                group: 0,
+                path: "a.jpg".into(),
+                r: Mat3::from_opk(11.0, -22.0, 33.0),
+                c: Vec3::new(3.0, -4.0, 5.0),
+            }],
+            ..Default::default()
+        };
+        let before = b.photos[0].clone();
+        apply_up_axis(&mut b, UpAxis::Z);
+        assert_eq!(b.photos[0].c, before.c);
+        assert_eq!(b.photos[0].r, before.r);
+    }
+
+    #[test]
+    fn reprojection_survives_the_up_axis_change() {
+        // The same standard the frame change is held to: a world point must
+        // land on the same pixel before and after.
+        let photo = Photo {
+            id: 0,
+            group: 0,
+            path: "a.jpg".into(),
+            r: Mat3::from_opk(8.0, -15.0, 120.0).orthonormalize(),
+            c: Vec3::new(12.0, -30.0, 95.0),
+        };
+        let mut b = Block {
+            groups: vec![],
+            photos: vec![photo.clone()],
+            ..Default::default()
+        };
+        let x_world = Vec3::new(-40.0, 22.0, 3.0);
+
+        let v0 = photo.r * (x_world - photo.c);
+
+        apply_up_axis(&mut b, UpAxis::Y);
+        let p1 = &b.photos[0];
+        let v1 = p1.r * (UpAxis::Y.rotation() * x_world - p1.c);
+
+        assert!(
+            (v0 - v1).length() < 1e-9,
+            "the point moved in camera space: {v0} vs {v1}"
+        );
     }
 }
 

@@ -132,6 +132,49 @@ Every run also writes `georeference.json`, recording the local frame's origin.
 Keep it: that is what puts a finished splat back into real-world coordinates,
 and it is not recoverable afterwards.
 
+## Which way is up
+
+A georeferenced block already knows. An east-north-up frame is Z-up, and so is
+a UTM grid, so that is what comes out by default — which is what COLMAP, QGIS
+and every photogrammetry tool expect. Viewers are the other camp: glTF,
+three.js, Blender and most NeRF tooling put up on +Y, and a Z-up cloud lies on
+its side in them.
+
+```
+terrapin export "Quarry Test 1" --out ./quarry --up-axis y
+```
+
+That rotates the cameras, their orientations and the cloud together, and
+records the rotation in `georeference.json` so it can be undone.
+
+Worth being clear about what this is not. Tools working from bare imagery have
+to *infer* gravity — from a ground plane, or from the null space of the camera
+axes — and those estimates are only as good as their assumptions about how the
+scene was flown. Nothing is inferred here. The CRS already placed the block, so
+up is known exactly and this is a relabelling of axes rather than a correction.
+The quarry block's camera extent is `861 x 1023 x 3.45 m`: three metres of
+vertical across a kilometre of survey, because the flight held its altitude.
+Guessing gravity from geometry that flat is exactly where estimators go wrong,
+and exactly where knowing the CRS costs nothing.
+
+## Colour in the cloud
+
+Terra writes the same cloud several ways and they do not all carry colour.
+`terra_ply` holds textured *meshes* — the colour lives in the JPEGs beside
+them, not on the vertices — so a cloud loaded from there is uniformly grey.
+`terra_las_1_4` carries per-point RGB. Prefer it, and `--cloud` will say so if
+what it loaded came out colourless.
+
+Colour is written as the standard `red` / `green` / `blue` uchar properties,
+which is what COLMAP, CloudCompare, MeshLab and Open3D read. Some viewers still
+need telling: F3D reports `Unknown scalar array: "color"` and falls back to
+flat shading, which looks exactly like a cloud with no colour in it. Press `s`
+to cycle scalar arrays, or:
+
+```
+f3d sparse_pc.ply --coloring-array=RGB --comp=-2
+```
+
 ## The conventions this gets right
 
 These are the things that make hand-rolled converters produce models which load

@@ -28,7 +28,24 @@ use clap::{Parser, Subcommand};
 use crate::block::Block;
 use crate::cloud::Cloud;
 use crate::export::{ExportOptions, Format};
-use crate::frame::LocalFrame;
+use crate::frame::{LocalFrame, UpAxis};
+
+/// The clap-facing spelling of [`UpAxis`], kept separate so the domain type
+/// does not have to depend on the argument parser.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+enum UpAxisArg {
+    Z,
+    Y,
+}
+
+impl From<UpAxisArg> for UpAxis {
+    fn from(a: UpAxisArg) -> Self {
+        match a {
+            UpAxisArg::Z => Self::Z,
+            UpAxisArg::Y => Self::Y,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -113,6 +130,11 @@ enum Command {
         /// Rewrite images that are already present.
         #[arg(long)]
         overwrite: bool,
+
+        /// Which axis points at the sky. `z` is east-north-up, what COLMAP and
+        /// GIS expect; `y` is what glTF, three.js and most viewers expect.
+        #[arg(long, value_enum, default_value = "z")]
+        up_axis: UpAxisArg,
     },
 
     /// Pair the original photographs with the block's poses and report,
@@ -168,9 +190,11 @@ fn main() -> Result<()> {
             quality,
             max_distance,
             overwrite,
+            up_axis,
         } => cmd_export(
             &xml,
             ExportRun {
+                up: up_axis.into(),
                 out,
                 formats: format,
                 cloud,
@@ -343,6 +367,7 @@ fn cmd_inspect(given: &std::path::Path, verbose: bool) -> Result<()> {
 }
 
 struct ExportRun {
+    up: UpAxis,
     out: PathBuf,
     formats: Vec<Format>,
     cloud: Option<PathBuf>,
@@ -359,6 +384,7 @@ struct ExportRun {
 
 fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
     let ExportRun {
+        up,
         out,
         formats,
         cloud: cloud_arg,
@@ -465,7 +491,29 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
 
         c.decimate(max_points);
         println!("  points kept       {}", thousands(c.len()));
+        if !c.has_color() {
+            warn(
+                "these tiles carry no per-point colour, so the cloud is uniform grey. \
+                 Terra's mesh tiles keep colour in their textures; the LAS tiles beside \
+                 them (models/pc/0/terra_las_1_4) do carry it",
+            );
+        }
         cloud = Some(c);
+    }
+
+    // ---- up-axis convention ----------------------------------------------
+    // Last, and after the cloud is placed: everything above works in the CRS's
+    // own east-north-up, and rotating the cameras out from under that midway
+    // would leave the cloud matched against a frame that no longer exists.
+    if up != UpAxis::Z {
+        rule("up axis");
+        frame::apply_up_axis(&mut block, up);
+        if let Some(c) = cloud.as_mut() {
+            let r = up.rotation();
+            c.transform(|p| r * p);
+        }
+        println!("  {}", up.label());
+        println!("  \x1b[36m→ georeference.json records this, so it can be undone\x1b[0m");
     }
 
     // ---- write -----------------------------------------------------------
@@ -499,6 +547,11 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
         "srs": block.srs.iter().map(|s| s.definition.clone()).collect::<Vec<_>>(),
         "photos": block.photos.len(),
         "frame": local,
+        // The frame above describes the CRS's own east-north-up. If the export
+        // was rotated into another convention, undoing this rotation is the
+        // first step back to real-world coordinates.
+        "up_axis": up.label(),
+        "up_axis_rotation": up.rotation().m,
     });
     let gpath = out.join("georeference.json");
     std::fs::write(&gpath, serde_json::to_string_pretty(&georef)?)?;
