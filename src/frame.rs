@@ -145,7 +145,21 @@ impl UpAxis {
 /// fixed camera changes that camera's orientation within it, and forgetting the
 /// second half leaves poses that point somewhere plausible and wrong.
 pub fn apply_up_axis(block: &mut Block, up: UpAxis) {
-    let r = up.rotation();
+    apply_world_rotation(block, up.rotation())
+}
+
+/// Return a block to the orientation its coordinate reference system defines.
+///
+/// GeoJSON, KML and the CSV pose table all describe real-world positions, and
+/// real-world positions do not care which axis a viewer likes pointing up. They
+/// are written from the unrotated frame, because converting a Y-up coordinate
+/// back to latitude and longitude with machinery expecting east-north-up
+/// produces a number that looks like a coordinate and is not one.
+pub fn undo_up_axis(block: &mut Block, up: UpAxis) {
+    apply_world_rotation(block, up.rotation().transpose())
+}
+
+fn apply_world_rotation(block: &mut Block, r: Mat3) {
     if r == Mat3::IDENTITY {
         return;
     }

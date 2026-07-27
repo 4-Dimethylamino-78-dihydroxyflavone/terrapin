@@ -600,6 +600,15 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
             "  {}",
             ui::cyan("→ georeference.json records this, so it can be undone")
         );
+        if formats
+            .iter()
+            .any(|f| matches!(f, Format::Geojson | Format::Kml | Format::Csv))
+        {
+            println!(
+                "  {}",
+                ui::dim("  GeoJSON, KML and CSV stay in real-world orientation")
+            );
+        }
     }
 
     // ---- write -----------------------------------------------------------
@@ -620,8 +629,23 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
             wanted.push(*f);
         }
     }
+    // Geographic outputs describe the real world, so they are written from the
+    // frame the CRS defines regardless of which axis the viewer wanted up.
+    let geographic_block = if up != UpAxis::Z {
+        let mut b = block.clone();
+        frame::undo_up_axis(&mut b, up);
+        Some(b)
+    } else {
+        None
+    };
+
     for f in &wanted {
-        let w = export::run(*f, &block, &opts)?;
+        let is_geographic = matches!(f, Format::Geojson | Format::Kml | Format::Csv);
+        let source = match (&geographic_block, is_geographic) {
+            (Some(b), true) => b,
+            _ => &block,
+        };
+        let w = export::run(*f, source, &opts)?;
         for file in &w.files {
             println!("  {:<14}  {}", w.format.label(), out.join(file).display());
         }
