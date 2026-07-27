@@ -13,6 +13,7 @@
 mod block;
 mod cloud;
 mod export;
+mod find;
 mod frame;
 mod geodesy;
 mod math;
@@ -227,9 +228,20 @@ fn describe_block(block: &Block, stats: &block::ParseStats, verbose: bool) {
     }
 }
 
-fn cmd_inspect(xml: &std::path::Path, verbose: bool) -> Result<()> {
-    let (block, stats) = block::parse_file(xml)?;
-    println!("\n\x1b[1m{}\x1b[0m", xml.display());
+/// Name the file actually opened, and say so plainly when it was not the path
+/// the user typed. Quietly substituting a different file would trade one
+/// confusion for a worse one.
+fn announce(found: &find::Found) {
+    println!("\n\x1b[1m{}\x1b[0m", found.path().display());
+    if matches!(found, find::Found::Discovered(_)) {
+        println!("  (found from the folder you pointed at)");
+    }
+}
+
+fn cmd_inspect(given: &std::path::Path, verbose: bool) -> Result<()> {
+    let found = find::block_xml(given)?;
+    announce(&found);
+    let (block, stats) = block::parse_file(found.path())?;
     describe_block(&block, &stats, verbose);
     println!("\n  (inspect only — nothing written)\n");
     Ok(())
@@ -237,7 +249,7 @@ fn cmd_inspect(xml: &std::path::Path, verbose: bool) -> Result<()> {
 
 #[allow(clippy::too_many_arguments)]
 fn cmd_export(
-    xml: &std::path::Path,
+    given: &std::path::Path,
     out: &std::path::Path,
     formats: &[Format],
     cloud_dir: Option<&std::path::Path>,
@@ -246,8 +258,10 @@ fn cmd_export(
     force_pinhole: bool,
     allow_disjoint: bool,
 ) -> Result<()> {
+    let found = find::block_xml(given)?;
+    let xml = found.path();
     let (mut block, stats) = block::parse_file(xml)?;
-    println!("\n\x1b[1m{}\x1b[0m", xml.display());
+    announce(&found);
     describe_block(&block, &stats, false);
 
     block.normalize_orientation();
@@ -416,8 +430,10 @@ fn write_ply_direct(path: &std::path::Path, c: &Cloud) -> Result<()> {
     Ok(())
 }
 
-fn cmd_report(at_dir: &std::path::Path, verbose: bool) -> Result<()> {
-    let r = report::load(at_dir)?;
+fn cmd_report(given: &std::path::Path, verbose: bool) -> Result<()> {
+    let found = find::at_dir(given)?;
+    announce(&found);
+    let r = report::load(found.path())?;
 
     if let Some(md) = &r.markdown {
         rule("report.md");

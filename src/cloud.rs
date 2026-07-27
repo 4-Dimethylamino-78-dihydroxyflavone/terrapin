@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use rayon::prelude::*;
+use walkdir::WalkDir;
 
 use crate::math::Vec3;
 
@@ -119,10 +120,17 @@ pub fn load_dir(dir: &Path, per_tile_cap: Option<usize>) -> Result<Cloud> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
     }
-    let mut tiles: Vec<PathBuf> = std::fs::read_dir(dir)
-        .with_context(|| format!("listing {}", dir.display()))?
+    // Terra nests each tile in its own folder — terra_ply/BlockRBABA/BlockRBABA.ply
+    // — so a flat listing reports an empty directory for one holding sixteen
+    // tiles. Depth is bounded because the same tree also holds the texture
+    // pyramid, and walking all of that to find sixteen files would be slow for
+    // no gain.
+    let mut tiles: Vec<PathBuf> = WalkDir::new(dir)
+        .max_depth(4)
+        .into_iter()
         .filter_map(|e| e.ok())
-        .map(|e| e.path())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
         .filter(|p| {
             matches!(
                 p.extension().and_then(|s| s.to_str()).map(str::to_lowercase).as_deref(),
@@ -133,7 +141,13 @@ pub fn load_dir(dir: &Path, per_tile_cap: Option<usize>) -> Result<Cloud> {
     tiles.sort();
 
     if tiles.is_empty() {
-        bail!("no .ply or .las tiles found in {}", dir.display());
+        bail!(
+            "no .ply or .las tiles found in {}, or in anything beneath it.\n\
+             Terra writes its cloud to models/pc/0/terra_ply or models/pc/0/terra_las_1_4 \
+             — point at one of those. The b3dm and pnts folders hold the same cloud in \
+             formats this does not read.",
+            dir.display()
+        );
     }
 
     let parts: Vec<Cloud> = tiles

@@ -18,7 +18,19 @@ rayon      = "=1.8.1"
 serde      = { version = "=1.0.196", features = ["derive"] }
 serde_json = "=1.0.113"
 
+# Guided front-end. `console` is what makes Windows 10 conhost honour ANSI:
+# it enables virtual-terminal processing, and degrades to plain text when the
+# handle is redirected or the console refuses.
+console    = "=0.16.4"
+dialoguer  = "=0.12.0"
+walkdir    = "=2.5.0"
+
+# JPEG only, and pure Rust (zune-jpeg). Default features would add PNG, TIFF
+# and WebP decoders this never touches.
+image      = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
+
 [profile.release]
 opt-level = 3
 lto       = true
 codegen-units = 1
+strip     = true
