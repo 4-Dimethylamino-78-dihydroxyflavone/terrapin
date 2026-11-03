@@ -1,11 +1,11 @@
-# The gates this repository is kept to. All four run locally with the same
-# commands, so a red run here means the tree really is broken rather than that
-# CI has its own opinions.
+# The gates this repository is kept to. Every command here is one that runs
+# locally, so a red run means the tree is broken rather than that CI has its
+# own opinions.
 #
-# No third-party actions and no build cache: GitHub's runners already ship
-# rustup, cargo, clippy and rustfmt, and a cold build of this crate is about
-# two minutes. A cache would be another moving part to debug on the day it
-# serves something stale.
+# No third-party actions and no build cache: the runners already carry rustup,
+# cargo, clippy and rustfmt, and a cold build of this crate is about two
+# minutes -- not worth another moving part to debug on the day it serves
+# something stale.
 name: CI
 
 on:
@@ -16,9 +16,16 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The toolchain the lint gate is pinned to. clippy gains lints with every
+  # release, so `-D warnings` against a floating stable turns a new Rust
+  # release into a red build with nothing having changed here -- which is
+  # exactly what happened on this workflow's first run. Tests and the release
+  # build still float on stable, where a new compiler finding something is
+  # real news. Bump this deliberately, after running the same command locally.
+  LINT_TOOLCHAIN: 1.96.0
 
 jobs:
-  check:
+  test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -33,24 +40,37 @@ jobs:
         run: |
           rustup update --no-self-update stable
           rustup default stable
-          rustup component add clippy rustfmt
           rustc --version
           cargo --version
-
-      - name: Formatting
-        run: cargo fmt --all -- --check
 
       # --locked everywhere: every dependency is pinned exactly in Cargo.toml,
       # so a run that silently resolved something else would not be testing
       # what ships.
-      - name: Clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
-
       - name: Tests
         run: cargo test --all --locked
 
       - name: Release build
         run: cargo build --release --locked
+
+  lints:
+    name: fmt and clippy (pinned)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$LINT_TOOLCHAIN" \
+            --profile minimal --component clippy --component rustfmt --no-self-update
+          rustup default "$LINT_TOOLCHAIN"
+          rustc --version
+          cargo clippy --version
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
 
   msrv:
     name: rustc 1.88 (the declared floor)
@@ -59,9 +79,10 @@ jobs:
       - uses: actions/checkout@v4
 
       # rust-version in Cargo.toml said 1.75 for months while the pinned
-      # image 0.25.10 required 1.88, so the floor could never have built. This
-      # job is here to keep that claim honest: it is the one thing a first-time
-      # reader following the README depends on and cannot check for themselves.
+      # image 0.25.10 required 1.88, so the declared floor could never have
+      # built this. This job keeps that claim honest: it is the one thing a
+      # first-time reader following the README depends on and cannot check for
+      # themselves.
       - name: Toolchain
         run: |
           rustup toolchain install 1.88.0 --profile minimal --no-self-update
