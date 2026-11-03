@@ -1,9 +1,10 @@
 # terrapin — module interface contract (ADR-001 implementation)
 
-Authoritative for the parallel implementation pass. Every signature here is
-fixed: other modules are being written against it concurrently. If you believe
-a signature is wrong, implement it as specified anyway and note the objection
-in your final report — do not change it unilaterally.
+The work order for the ADR-001 implementation pass, kept for the dataset
+findings it records rather than as a description of the code. Where the two
+disagree the code wins: the `cloud.rs` section below, `MatchReport`'s
+`had_collisions` field, the `stage` subcommand and the `--for <target>`
+preset were all specified here and were not built this way.
 
 ## Ground truth from the real dataset
 

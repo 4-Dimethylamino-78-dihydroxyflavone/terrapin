@@ -18,7 +18,9 @@ without a Terra licence and without re-running structure from motion.
 Double-click `terrapin.exe`, or drag the Terra project folder onto it. It asks
 a handful of questions in plain language, works out for itself where the
 photographs and the point cloud are, and tells you what it is about to do
-before it does it. Enter takes the safe answer to everything.
+before it does it. Enter takes the safe answer to every question that has
+one; the only things you have to supply are where the project is and where
+the photographs are.
 
 At the end it prints the command your answers came to, so the second time you
 can skip the questions if you want to. There is no separate code path behind
@@ -35,7 +37,7 @@ cargo build --release
 ```
 
 No system dependencies, no PROJ, no GDAL, no Python, no CUDA. Builds on rustc
-1.75+. On Windows the C runtime is linked statically, so the result is a single
+1.88+. On Windows the C runtime is linked statically, so the result is a single
 file that depends on nothing but Windows itself — copy `terrapin.exe` to
 another machine and it runs.
 
@@ -145,6 +147,9 @@ work.
 | `geojson`    | `cameras.geojson`                        | QGIS, ArcGIS Pro |
 | `kml`        | `cameras.kml`                            | Google Earth |
 | `csv`        | `cameras.csv`                            | anything; local + geodetic + omega/phi/kappa |
+
+`sparse_pc.ply` is written only when `--cloud` is given; without a cloud the
+camera centres are the only geometry exported.
 
 Every run also writes `georeference.json`, recording the local frame's origin.
 Keep it: that is what puts a finished splat back into real-world coordinates,
@@ -264,9 +269,10 @@ will rescue it — re-align instead.
 cargo test
 ```
 
-43 tests. The load-bearing ones are `frame::reprojection_survives_the_frame_change`,
+The load-bearing ones are `frame::tests::reprojection_survives_the_frame_change`,
 which asserts a world point lands on the same pixel before and after the change
-of frame, and `math::quat_roundtrip_is_exact`, which exercises every branch of
+of frame, and `math::tests::quat_roundtrip_is_exact`, which exercises every
+branch of
 the quaternion conversion including the 180° cases where the naive formula
 divides by zero.
 

@@ -2,9 +2,10 @@
 name    = "terrapin"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.88"
 description = "Extract DJI Terra aerotriangulation blocks into open, portable formats"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/4-Dimethylamino-78-dihydroxyflavone/terrapin"
 
 [[bin]]
 name = "terrapin"

@@ -1,7 +1,9 @@
 # ADR-001: A single-file guided pipeline from DJI Terra to Gaussian-splat trainers
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-28
+**Implemented:** the decisions below shipped; the action items are the
+original plan of 2026-07-28, not a current checklist.
 **Deciders:** Nicholas + partner
 
 ## Context
