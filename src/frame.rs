@@ -391,8 +391,16 @@ mod up_axis_tests {
     fn y_up_sends_the_vertical_to_y_and_is_a_rotation() {
         let r = UpAxis::Y.rotation();
         assert_eq!(r * Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 0.0), "up");
-        assert_eq!(r * Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), "east");
-        assert_eq!(r * Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, -1.0), "north");
+        assert_eq!(
+            r * Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            "east"
+        );
+        assert_eq!(
+            r * Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            "north"
+        );
         // A reflection here would mirror the scene, which trains without
         // complaint and is wrong.
         assert!((r.det() - 1.0).abs() < 1e-12, "not a proper rotation");
@@ -503,7 +511,6 @@ mod tests {
         (b, truth)
     }
 
-
     #[test]
     fn detects_ecef_from_srs_string() {
         let (b, _) = ecef_block();
@@ -590,7 +597,10 @@ mod tests {
         }
         assert_eq!(SourceFrame::detect(&b), SourceFrame::Projected);
         let f = LocalFrame::build_and_apply(&mut b);
-        assert!(!f.is_georeferenced(), "projected blocks have no ECEF origin");
+        assert!(
+            !f.is_georeferenced(),
+            "projected blocks have no ECEF origin"
+        );
         assert!(b.centroid().length() < 1e-9);
         // Rotations must be untouched when there is no ENU rotation involved.
         assert_eq!(b.photos[0].r, Mat3::IDENTITY);

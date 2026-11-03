@@ -173,7 +173,10 @@ fn colmap_txt(block: &Block, opts: &ExportOptions) -> Result<Vec<String>> {
 
     let mut w = BufWriter::new(File::create(dir.join("images.txt"))?);
     writeln!(w, "# Image list with two lines of data per image:")?;
-    writeln!(w, "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME")?;
+    writeln!(
+        w,
+        "#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME"
+    )?;
     writeln!(w, "#   POINTS2D[] as (X, Y, POINT3D_ID)")?;
     writeln!(
         w,
@@ -315,7 +318,11 @@ fn nerfstudio(block: &Block, opts: &ExportOptions) -> Result<Vec<String>> {
     writeln!(
         w,
         "  \"camera_model\": \"{}\",",
-        if m0.name == "PINHOLE" { "PINHOLE" } else { "OPENCV" }
+        if m0.name == "PINHOLE" {
+            "PINHOLE"
+        } else {
+            "OPENCV"
+        }
     )?;
     if single {
         writeln!(w, "  \"w\": {},", g0.width)?;
@@ -343,11 +350,7 @@ fn nerfstudio(block: &Block, opts: &ExportOptions) -> Result<Vec<String>> {
         // OpenGL by flipping the Y and Z basis vectors.
         let c2w = p.r.transpose() * FLIP_YZ;
         writeln!(w, "    {{")?;
-        writeln!(
-            w,
-            "      \"file_path\": \"images/{}\",",
-            opts.image_name(p)
-        )?;
+        writeln!(w, "      \"file_path\": \"images/{}\",", opts.image_name(p))?;
         if !single {
             writeln!(w, "      \"w\": {},", g.width)?;
             writeln!(w, "      \"h\": {},", g.height)?;
@@ -361,10 +364,7 @@ fn nerfstudio(block: &Block, opts: &ExportOptions) -> Result<Vec<String>> {
             writeln!(
                 w,
                 "        [{:.12}, {:.12}, {:.12}, {:.8}],",
-                c2w.m[r][0],
-                c2w.m[r][1],
-                c2w.m[r][2],
-                p.c[r]
+                c2w.m[r][0], c2w.m[r][1], c2w.m[r][2], p.c[r]
             )?;
         }
         writeln!(w, "        [0.0, 0.0, 0.0, 1.0]")?;
@@ -542,11 +542,18 @@ fn kml(block: &Block, opts: &ExportOptions) -> Result<Vec<String>> {
     let mut w = BufWriter::new(File::create(opts.out_dir.join("cameras.kml"))?);
 
     writeln!(w, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")?;
-    writeln!(w, "<kml xmlns=\"http://www.opengis.net/kml/2.2\"><Document>")?;
+    writeln!(
+        w,
+        "<kml xmlns=\"http://www.opengis.net/kml/2.2\"><Document>"
+    )?;
     writeln!(
         w,
         "<name>{} camera stations</name>",
-        escape_xml(if block.name.is_empty() { "terrapin" } else { &block.name })
+        escape_xml(if block.name.is_empty() {
+            "terrapin"
+        } else {
+            &block.name
+        })
     )?;
     writeln!(w, "<Folder><name>Cameras</name>")?;
     for (name, lat, lon, h) in &track {
@@ -584,7 +591,11 @@ fn csv(block: &Block, opts: &ExportOptions) -> Result<Vec<String>> {
         let (o, ph, k) = p.r.to_opk_degrees();
         let geo = opts.frame.to_geodetic(p.c);
         let (lat, lon, h) = match geo {
-            Some(v) => (format!("{:.9}", v.0), format!("{:.9}", v.1), format!("{:.3}", v.2)),
+            Some(v) => (
+                format!("{:.9}", v.0),
+                format!("{:.9}", v.1),
+                format!("{:.3}", v.2),
+            ),
             None => (String::new(), String::new(), String::new()),
         };
         writeln!(
@@ -758,7 +769,10 @@ mod tests {
         // The camera-to-world matrix must be the transpose with Y,Z flipped.
         let p = &b.photos[0];
         let want = p.r.transpose() * FLIP_YZ;
-        let first_row = format!("[{:.12}, {:.12}, {:.12}", want.m[0][0], want.m[0][1], want.m[0][2]);
+        let first_row = format!(
+            "[{:.12}, {:.12}, {:.12}",
+            want.m[0][0], want.m[0][1], want.m[0][2]
+        );
         assert!(s.contains(&first_row), "expected row {first_row} in\n{s}");
         fs::remove_dir_all(dir).ok();
     }
@@ -771,7 +785,10 @@ mod tests {
         let s = fs::read_to_string(dir.join("transforms.json")).unwrap();
         let v: serde_json::Value = serde_json::from_str(&s).expect("transforms.json is invalid");
         assert_eq!(v["frames"].as_array().unwrap().len(), 3);
-        assert_eq!(v["frames"][0]["transform_matrix"].as_array().unwrap().len(), 4);
+        assert_eq!(
+            v["frames"][0]["transform_matrix"].as_array().unwrap().len(),
+            4
+        );
         fs::remove_dir_all(dir).ok();
     }
 
@@ -859,6 +876,10 @@ mod tests {
         assert_eq!(m.params.len(), 12);
         assert_eq!(m.params[8], -4e-4, "k3 sits after p2 in FULL_OPENCV");
 
-        assert_eq!(camera_model(&g, true).name, "PINHOLE", "--force-pinhole ignored");
+        assert_eq!(
+            camera_model(&g, true).name,
+            "PINHOLE",
+            "--force-pinhole ignored"
+        );
     }
 }

@@ -14,9 +14,8 @@ use serde_json::Value;
 
 /// Key fragments worth pulling to the top of the summary.
 const INTERESTING: &[&str] = &[
-    "reproj", "error", "rms", "residual", "calibrat", "register", "align",
-    "tie", "match", "photo", "image", "camera", "count", "num", "total",
-    "median", "mean", "max", "min", "gsd", "overlap",
+    "reproj", "error", "rms", "residual", "calibrat", "register", "align", "tie", "match", "photo",
+    "image", "camera", "count", "num", "total", "median", "mean", "max", "min", "gsd", "overlap",
 ];
 
 #[derive(Debug, Default)]
@@ -47,8 +46,8 @@ pub fn load(at_dir: &Path) -> Result<AtReport> {
 
     let sfm = report_dir.join("sfm_report.json");
     if sfm.is_file() {
-        let text = std::fs::read_to_string(&sfm)
-            .with_context(|| format!("reading {}", sfm.display()))?;
+        let text =
+            std::fs::read_to_string(&sfm).with_context(|| format!("reading {}", sfm.display()))?;
         let v: Value = serde_json::from_str(&text)
             .with_context(|| format!("{} is not valid JSON", sfm.display()))?;
         flatten(&v, String::new(), &mut out.fields);
@@ -154,9 +153,7 @@ fn residual_stats(path: &Path) -> Result<ResidualStats> {
             .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
         let spread = hi - lo;
         // Ignore monotonic index columns, which also have a large spread.
-        let looks_like_index = vals
-            .windows(2)
-            .all(|w| (w[1] - w[0] - 1.0).abs() < 1e-9);
+        let looks_like_index = vals.windows(2).all(|w| (w[1] - w[0] - 1.0).abs() < 1e-9);
         if looks_like_index {
             continue;
         }
@@ -169,7 +166,10 @@ fn residual_stats(path: &Path) -> Result<ResidualStats> {
     vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = vals.len();
     let median = vals[n / 2];
-    let outliers = vals.iter().filter(|v| v.abs() > 3.0 * median.abs().max(1e-9)).count();
+    let outliers = vals
+        .iter()
+        .filter(|v| v.abs() > 3.0 * median.abs().max(1e-9))
+        .count();
 
     Ok(ResidualStats {
         rows: n,
@@ -206,14 +206,19 @@ mod tests {
         .unwrap();
         let r = load(&d).unwrap();
         assert_eq!(
-            r.fields.get("summary.reprojection_error_rms").map(String::as_str),
+            r.fields
+                .get("summary.reprojection_error_rms")
+                .map(String::as_str),
             Some("0.62")
         );
         assert!(r.highlights.contains_key("summary.reprojection_error_rms"));
         assert!(r.highlights.contains_key("summary.num_calibrated"));
         assert!(!r.highlights.contains_key("unrelated.colour"));
         // Long arrays collapse to a length.
-        assert_eq!(r.fields.get("per_photo.length").map(String::as_str), Some("10"));
+        assert_eq!(
+            r.fields.get("per_photo.length").map(String::as_str),
+            Some("10")
+        );
         fs::remove_dir_all(d).ok();
     }
 

@@ -120,7 +120,9 @@ fn find_image_candidates(project: &Path, want: usize) -> Vec<(PathBuf, usize)> {
     roots.push(project.to_path_buf());
 
     for root in roots {
-        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            continue;
+        };
         for e in rd.filter_map(|e| e.ok()) {
             let p = e.path();
             if !p.is_dir() {
@@ -135,7 +137,9 @@ fn find_image_candidates(project: &Path, want: usize) -> Vec<(PathBuf, usize)> {
                 continue;
             }
             // The flights live one level inside DCIM.
-            let Ok(inner) = std::fs::read_dir(&p) else { continue };
+            let Ok(inner) = std::fs::read_dir(&p) else {
+                continue;
+            };
             for f in inner.filter_map(|e| e.ok()) {
                 let d = f.path();
                 if !d.is_dir() || seen.contains(&d) {
@@ -163,7 +167,11 @@ fn find_image_candidates(project: &Path, want: usize) -> Vec<(PathBuf, usize)> {
 fn find_cloud(project: &Path) -> Option<(PathBuf, bool)> {
     let mut las = None;
     let mut ply = None;
-    for e in WalkDir::new(project).max_depth(5).into_iter().filter_map(|e| e.ok()) {
+    for e in WalkDir::new(project)
+        .max_depth(5)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if !e.file_type().is_dir() {
             continue;
         }
@@ -204,7 +212,11 @@ fn quality_rows(md: &str) -> Vec<(String, String)> {
         if !line.contains('|') {
             continue;
         }
-        let cells: Vec<&str> = line.split('|').map(str::trim).filter(|c| !c.is_empty()).collect();
+        let cells: Vec<&str> = line
+            .split('|')
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+            .collect();
         if cells.len() < 2 {
             continue;
         }
@@ -400,7 +412,11 @@ pub fn plan(start: Option<PathBuf>) -> Result<Option<Plan>> {
                     n,
                     ui::bold(&p.display().to_string())
                 );
-                if Confirm::new().with_prompt("Use these").default(true).interact()? {
+                if Confirm::new()
+                    .with_prompt("Use these")
+                    .default(true)
+                    .interact()?
+                {
                     Some(p.clone())
                 } else {
                     None
@@ -413,7 +429,11 @@ pub fn plan(start: Option<PathBuf>) -> Result<Option<Plan>> {
                     ui::bold(&p.display().to_string()),
                     ui::yellow(&format!("(the project has {} poses)", blk.photos.len()))
                 );
-                if Confirm::new().with_prompt("Use these").default(false).interact()? {
+                if Confirm::new()
+                    .with_prompt("Use these")
+                    .default(false)
+                    .interact()?
+                {
                     Some(p.clone())
                 } else {
                     None
@@ -454,7 +474,11 @@ pub fn plan(start: Option<PathBuf>) -> Result<Option<Plan>> {
             },
             ui::bold(&path.display().to_string())
         );
-        if Confirm::new().with_prompt("Use it").default(true).interact()? {
+        if Confirm::new()
+            .with_prompt("Use it")
+            .default(true)
+            .interact()?
+        {
             cloud = Some(path);
         }
     } else {
@@ -482,23 +506,24 @@ pub fn plan(start: Option<PathBuf>) -> Result<Option<Plan>> {
 
     // ---- 7. where it goes ------------------------------------------------
     heading("where should the result go");
-    let default_out = project
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(format!(
-            "{}_splat",
-            project
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "terrapin".into())
-        ));
+    let default_out = project.parent().unwrap_or(Path::new(".")).join(format!(
+        "{}_splat",
+        project
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "terrapin".into())
+    ));
     let raw: String = Input::new()
         .with_prompt("Output folder")
         .default(default_out.display().to_string())
         .interact_text()?;
     let out = clean_input(&raw);
 
-    if out.exists() && std::fs::read_dir(&out).map(|mut d| d.next().is_some()).unwrap_or(false) {
+    if out.exists()
+        && std::fs::read_dir(&out)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+    {
         println!(
             "\n  {}",
             ui::yellow("that folder already has something in it; existing files are kept")
@@ -537,7 +562,11 @@ pub fn plan(start: Option<PathBuf>) -> Result<Option<Plan>> {
         println!("  orientation       {}", up.label());
     }
 
-    if !Confirm::new().with_prompt("\nGo").default(true).interact()? {
+    if !Confirm::new()
+        .with_prompt("\nGo")
+        .default(true)
+        .interact()?
+    {
         return Ok(None);
     }
 

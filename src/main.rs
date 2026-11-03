@@ -548,7 +548,10 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
         let offset = c.centroid_offset_from(camera_centroid);
         let scale = block.extent().max_element().max(1.0);
         let ce = c.extent();
-        println!("  cloud extent      {:.2} x {:.2} x {:.2} m", ce.x, ce.y, ce.z);
+        println!(
+            "  cloud extent      {:.2} x {:.2} x {:.2} m",
+            ce.x, ce.y, ce.z
+        );
         println!(
             "  centroid offset   {} m  (scene scale {} m)",
             thousands(offset as usize),
@@ -565,7 +568,8 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
                      (check the metadata.xml beside the tiles).\n\
                      Re-run with --allow-disjoint-cloud to write it regardless, or omit \
                      --cloud and let the trainer use random initialisation.",
-                    offset, scale
+                    offset,
+                    scale
                 );
             }
         } else {
@@ -690,11 +694,7 @@ fn describe_match(
         println!("  without GPS       {skipped} (skipped)");
     }
     let fixed = stage::rtk_fixed_count(images);
-    println!(
-        "  RTK fixed         {} of {}",
-        fixed,
-        images.len()
-    );
+    println!("  RTK fixed         {} of {}", fixed, images.len());
     if let Some(c) = card {
         println!("  aircraft logged   {} captures", c.captured);
         if !c.missing.is_empty() {
@@ -704,11 +704,19 @@ fn describe_match(
                  those poses cannot be matched and that is not a fault of the pairing",
                 c.missing.len(),
                 shown.join(", "),
-                if c.missing.len() > shown.len() { ", ..." } else { "" }
+                if c.missing.len() > shown.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
             ));
         }
     }
-    println!("  matched to poses  {} of {}", m.matched, block.photos.len());
+    println!(
+        "  matched to poses  {} of {}",
+        m.matched,
+        block.photos.len()
+    );
     if m.unmatched > 0 {
         warn(&format!(
             "{} pose(s) had no photograph within range and will be left out",
@@ -826,7 +834,10 @@ fn stage_images(
         warn(&format!("and {} more", report.failed.len() - 5));
     }
     if !keep_distortion {
-        println!("  outside the frame {:.1}%", report.mean_out_of_bounds * 100.0);
+        println!(
+            "  outside the frame {:.1}%",
+            report.mean_out_of_bounds * 100.0
+        );
         // A sign error or a wrong convention sends most of the output off the
         // edge of the source. Correct lens correction loses only the corners.
         if report.mean_out_of_bounds > 0.15 {
@@ -985,7 +996,11 @@ mod tests {
     #[test]
     fn formats_parse_from_a_comma_list() {
         let cli = Cli::try_parse_from([
-            "terrapin", "export", "a.xml", "--format", "colmap-txt,nerfstudio,geojson",
+            "terrapin",
+            "export",
+            "a.xml",
+            "--format",
+            "colmap-txt,nerfstudio,geojson",
         ])
         .unwrap();
         match cli.command {

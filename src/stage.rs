@@ -105,8 +105,8 @@ pub fn calibration_from_report(at_dir: &Path) -> Result<Option<Calibration>> {
     if !path.is_file() {
         return Ok(None);
     }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     Ok(parse_calibration(&text))
 }
 
@@ -255,7 +255,11 @@ pub fn scan_images(roots: &[PathBuf]) -> Result<(Vec<SourceImage>, usize)> {
                 root.display()
             );
         }
-        for e in WalkDir::new(root).max_depth(6).into_iter().filter_map(|e| e.ok()) {
+        for e in WalkDir::new(root)
+            .max_depth(6)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             if !e.file_type().is_file() {
                 continue;
             }
@@ -287,8 +291,8 @@ pub fn scan_images(roots: &[PathBuf]) -> Result<(Vec<SourceImage>, usize)> {
 /// Only used as a cross-check on the count, since it records what the aircraft
 /// captured regardless of what survived onto the card.
 pub fn read_mrk(path: &Path) -> Result<Vec<(u32, f64, f64, f64)>> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut out = Vec::new();
     for line in text.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -305,7 +309,9 @@ pub fn read_mrk(path: &Path) -> Result<Vec<(u32, f64, f64, f64)>> {
             let Some((value, tag)) = f.split_once(',') else {
                 continue;
             };
-            let Ok(v) = value.parse::<f64>() else { continue };
+            let Ok(v) = value.parse::<f64>() else {
+                continue;
+            };
             match tag {
                 "Lat" => lat = Some(v),
                 "Lon" => lon = Some(v),
@@ -336,7 +342,11 @@ pub struct CardCheck {
 pub fn check_against_mrk(roots: &[PathBuf], images: &[SourceImage]) -> Option<CardCheck> {
     let mut rows = Vec::new();
     for root in roots {
-        for e in WalkDir::new(root).max_depth(6).into_iter().filter_map(|e| e.ok()) {
+        for e in WalkDir::new(root)
+            .max_depth(6)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             let is_mrk = e
                 .path()
                 .extension()
@@ -505,7 +515,9 @@ pub fn copy_originals_into(
 
     for (i, src) in matches.chosen.iter().enumerate() {
         let Some(src) = src else { continue };
-        let Some(name) = src.file_name() else { continue };
+        let Some(name) = src.file_name() else {
+            continue;
+        };
         let dest = dir.join(name);
 
         if dest.exists() && !opts.overwrite {
@@ -672,14 +684,24 @@ pub fn undistort_into(
             }
 
             if dest.exists() && !opts.overwrite {
-                return Outcome { index: *i, name: Some(name), failure: None, skipped: true };
+                return Outcome {
+                    index: *i,
+                    name: Some(name),
+                    failure: None,
+                    skipped: true,
+                };
             }
 
             let g = &block.groups[block.photos[*i].group];
             let map = &maps[&key(g)];
 
             match undistort_one(source, &dest, map, opts.jpeg_quality) {
-                Ok(()) => Outcome { index: *i, name: Some(name), failure: None, skipped: false },
+                Ok(()) => Outcome {
+                    index: *i,
+                    name: Some(name),
+                    failure: None,
+                    skipped: false,
+                },
                 Err(e) => Outcome {
                     index: *i,
                     name: None,
@@ -691,8 +713,7 @@ pub fn undistort_into(
         .collect();
 
     let mut report = StageReport {
-        mean_out_of_bounds: maps.values().map(|m| m.out_of_bounds).sum::<f64>()
-            / maps.len() as f64,
+        mean_out_of_bounds: maps.values().map(|m| m.out_of_bounds).sum::<f64>() / maps.len() as f64,
         ..Default::default()
     };
     for o in outcomes {
@@ -734,12 +755,21 @@ fn undistort_one(source: &Path, dest: &Path, map: &Remap, quality: u8) -> Result
 
     let px = img.as_raw();
     let mut out = vec![0u8; w * h * 3];
-    out.par_chunks_mut(w * 3).enumerate().for_each(|(row, dst)| {
-        for col in 0..w {
-            let i = row * w + col;
-            sample_bilinear(px, w, h, map.xs[i], map.ys[i], &mut dst[col * 3..col * 3 + 3]);
-        }
-    });
+    out.par_chunks_mut(w * 3)
+        .enumerate()
+        .for_each(|(row, dst)| {
+            for col in 0..w {
+                let i = row * w + col;
+                sample_bilinear(
+                    px,
+                    w,
+                    h,
+                    map.xs[i],
+                    map.ys[i],
+                    &mut dst[col * 3..col * 3 + 3],
+                );
+            }
+        });
 
     // Write beside the target then rename, so an interrupted run never leaves a
     // half-written JPEG that a later pass would mistake for finished work.
@@ -791,7 +821,11 @@ Camera Model M4E_WideCamera
 
     #[test]
     fn falls_back_to_initial_when_the_solve_row_is_missing() {
-        let only_initial = REPORT.lines().filter(|l| !l.contains("Optimized")).collect::<Vec<_>>().join("\n");
+        let only_initial = REPORT
+            .lines()
+            .filter(|l| !l.contains("Optimized"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let c = parse_calibration(&only_initial).unwrap();
         assert_eq!(c.focal, 3713.26);
     }
@@ -858,12 +892,21 @@ Camera Model M4E_WideCamera
     #[test]
     fn xmp_fields_read_from_attributes_and_elements() {
         let attr = r#"<rdf:Description drone-dji:GpsLatitude="-34.26054415" drone-dji:GpsLongitude="+150.59458478" drone-dji:RtkFlag="50"/>"#;
-        assert_eq!(xmp_number(attr, "drone-dji:GpsLatitude"), Some(-34.26054415));
-        assert_eq!(xmp_number(attr, "drone-dji:GpsLongitude"), Some(150.59458478));
+        assert_eq!(
+            xmp_number(attr, "drone-dji:GpsLatitude"),
+            Some(-34.26054415)
+        );
+        assert_eq!(
+            xmp_number(attr, "drone-dji:GpsLongitude"),
+            Some(150.59458478)
+        );
         assert_eq!(xmp_number(attr, "drone-dji:RtkFlag"), Some(50.0));
 
         let elem = "<drone-dji:AbsoluteAltitude>452.032</drone-dji:AbsoluteAltitude>";
-        assert_eq!(xmp_number(elem, "drone-dji:AbsoluteAltitude"), Some(452.032));
+        assert_eq!(
+            xmp_number(elem, "drone-dji:AbsoluteAltitude"),
+            Some(452.032)
+        );
 
         assert_eq!(xmp_number("nothing to see", "drone-dji:GpsLatitude"), None);
     }

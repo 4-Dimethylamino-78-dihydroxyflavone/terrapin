@@ -142,10 +142,16 @@ impl Utm {
             if run.len() == 5 {
                 if let Ok(code) = run.parse::<u32>() {
                     if (32601..=32660).contains(&code) {
-                        return Some(Self { zone: (code - 32600) as u8, north: true });
+                        return Some(Self {
+                            zone: (code - 32600) as u8,
+                            north: true,
+                        });
                     }
                     if (32701..=32760).contains(&code) {
-                        return Some(Self { zone: (code - 32700) as u8, north: false });
+                        return Some(Self {
+                            zone: (code - 32700) as u8,
+                            north: false,
+                        });
                     }
                 }
             }
@@ -211,7 +217,8 @@ fn alpha() -> [f64; 6] {
             + 7891.0 * n6 / 37800.0,
         13.0 * n2 / 48.0 - 3.0 * n3 / 5.0 + 557.0 * n4 / 1440.0 + 281.0 * n5 / 630.0
             - 1_983_433.0 * n6 / 1_935_360.0,
-        61.0 * n3 / 240.0 - 103.0 * n4 / 140.0 + 15061.0 * n5 / 26880.0
+        61.0 * n3 / 240.0 - 103.0 * n4 / 140.0
+            + 15061.0 * n5 / 26880.0
             + 167_603.0 * n6 / 181_440.0,
         49561.0 * n4 / 161_280.0 - 179.0 * n5 / 168.0 + 6_601_661.0 * n6 / 7_257_600.0,
         34729.0 * n5 / 80640.0 - 3_418_889.0 * n6 / 1_995_840.0,
@@ -240,7 +247,8 @@ fn delta() -> [f64; 6] {
     [
         2.0 * n - 2.0 * n2 / 3.0 - 2.0 * n3 + 116.0 * n4 / 45.0 + 26.0 * n5 / 45.0
             - 2854.0 * n6 / 675.0,
-        7.0 * n2 / 3.0 - 8.0 * n3 / 5.0 - 227.0 * n4 / 45.0 + 2704.0 * n5 / 315.0
+        7.0 * n2 / 3.0 - 8.0 * n3 / 5.0 - 227.0 * n4 / 45.0
+            + 2704.0 * n5 / 315.0
             + 2323.0 * n6 / 945.0,
         56.0 * n3 / 15.0 - 136.0 * n4 / 35.0 - 1262.0 * n5 / 105.0 + 73814.0 * n6 / 2835.0,
         4279.0 * n4 / 630.0 - 332.0 * n5 / 35.0 - 399_572.0 * n6 / 14175.0,
@@ -283,14 +291,23 @@ pub fn geodetic_to_utm(lat_deg: f64, lon_deg: f64, zone: Utm) -> (f64, f64) {
     }
 
     let easting = FALSE_EASTING + K0 * a * eta;
-    let northing = K0 * a * xi + if zone.north { 0.0 } else { FALSE_NORTHING_SOUTH };
+    let northing = K0 * a * xi
+        + if zone.north {
+            0.0
+        } else {
+            FALSE_NORTHING_SOUTH
+        };
     (easting, northing)
 }
 
 /// UTM grid to geodetic. Returns (latitude, longitude) in degrees.
 pub fn utm_to_geodetic(easting: f64, northing: f64, zone: Utm) -> (f64, f64) {
     let a = rectifying_radius();
-    let n0 = if zone.north { 0.0 } else { FALSE_NORTHING_SOUTH };
+    let n0 = if zone.north {
+        0.0
+    } else {
+        FALSE_NORTHING_SOUTH
+    };
 
     let xi = (northing - n0) / (K0 * a);
     let eta = (easting - FALSE_EASTING) / (K0 * a);
@@ -312,10 +329,7 @@ pub fn utm_to_geodetic(easting: f64, northing: f64, zone: Utm) -> (f64, f64) {
     }
 
     let lam = eta_p.sinh().atan2(xi_p.cos());
-    (
-        phi.to_degrees(),
-        zone.central_meridian() + lam.to_degrees(),
-    )
+    (phi.to_degrees(), zone.central_meridian() + lam.to_degrees())
 }
 
 #[cfg(test)]
@@ -329,14 +343,23 @@ mod utm_tests {
     #[test]
     fn zone_56s_is_where_the_quarry_is() {
         let z = Utm::for_lonlat(QUARRY_LON, QUARRY_LAT);
-        assert_eq!(z, Utm { zone: 56, north: false });
+        assert_eq!(
+            z,
+            Utm {
+                zone: 56,
+                north: false
+            }
+        );
         assert_eq!(z.epsg(), 32756);
         assert_eq!(z.central_meridian(), 153.0);
     }
 
     #[test]
     fn parses_every_form_terra_and_its_neighbours_write() {
-        let s = Utm { zone: 56, north: false };
+        let s = Utm {
+            zone: 56,
+            north: false,
+        };
         for blob in [
             "EPSG:32756",
             "epsg:32756",
@@ -349,7 +372,10 @@ mod utm_tests {
         }
         assert_eq!(
             Utm::parse("WGS 84 / UTM zone 31N"),
-            Some(Utm { zone: 31, north: true })
+            Some(Utm {
+                zone: 31,
+                north: true
+            })
         );
     }
 
@@ -362,7 +388,16 @@ mod utm_tests {
 
     #[test]
     fn the_central_meridian_on_the_equator_is_the_grid_origin() {
-        for zone in [Utm { zone: 56, north: true }, Utm { zone: 31, north: true }] {
+        for zone in [
+            Utm {
+                zone: 56,
+                north: true,
+            },
+            Utm {
+                zone: 31,
+                north: true,
+            },
+        ] {
             let (e, n) = geodetic_to_utm(0.0, zone.central_meridian(), zone);
             assert!((e - FALSE_EASTING).abs() < 1e-6, "easting {e}");
             assert!(n.abs() < 1e-6, "northing {n}");
@@ -371,7 +406,10 @@ mod utm_tests {
 
     #[test]
     fn southern_hemisphere_carries_the_false_northing() {
-        let z = Utm { zone: 56, north: false };
+        let z = Utm {
+            zone: 56,
+            north: false,
+        };
         let (_, n) = geodetic_to_utm(0.0, 153.0, z);
         assert!(
             (n - FALSE_NORTHING_SOUTH).abs() < 1e-6,
@@ -382,15 +420,71 @@ mod utm_tests {
     #[test]
     fn utm_roundtrip_holds_across_zones_and_hemispheres() {
         let cases = [
-            (QUARRY_LAT, QUARRY_LON, Utm { zone: 56, north: false }),
-            (-33.8688, 151.2093, Utm { zone: 56, north: false }),
-            (51.4778, -0.0015, Utm { zone: 30, north: true }),
-            (0.0, 153.0, Utm { zone: 56, north: true }),
-            (60.0, 5.0, Utm { zone: 32, north: true }),
-            (-45.0, 170.5, Utm { zone: 59, north: false }),
+            (
+                QUARRY_LAT,
+                QUARRY_LON,
+                Utm {
+                    zone: 56,
+                    north: false,
+                },
+            ),
+            (
+                -33.8688,
+                151.2093,
+                Utm {
+                    zone: 56,
+                    north: false,
+                },
+            ),
+            (
+                51.4778,
+                -0.0015,
+                Utm {
+                    zone: 30,
+                    north: true,
+                },
+            ),
+            (
+                0.0,
+                153.0,
+                Utm {
+                    zone: 56,
+                    north: true,
+                },
+            ),
+            (
+                60.0,
+                5.0,
+                Utm {
+                    zone: 32,
+                    north: true,
+                },
+            ),
+            (
+                -45.0,
+                170.5,
+                Utm {
+                    zone: 59,
+                    north: false,
+                },
+            ),
             // Deliberately near the zone edge, where a truncated series shows.
-            (-34.0, 155.9, Utm { zone: 56, north: false }),
-            (-34.0, 150.1, Utm { zone: 56, north: false }),
+            (
+                -34.0,
+                155.9,
+                Utm {
+                    zone: 56,
+                    north: false,
+                },
+            ),
+            (
+                -34.0,
+                150.1,
+                Utm {
+                    zone: 56,
+                    north: false,
+                },
+            ),
         ];
         for (lat, lon, z) in cases {
             let (e, n) = geodetic_to_utm(lat, lon, z);
@@ -416,7 +510,10 @@ mod utm_tests {
         // hundred metres apart, so this asserts they are the same PLACE — which is
         // what catches a hemisphere error, a wrong zone, or a dropped false
         // northing, all of which land kilometres or megametres away.
-        let z = Utm { zone: 56, north: false };
+        let z = Utm {
+            zone: 56,
+            north: false,
+        };
         let (e, n) = geodetic_to_utm(QUARRY_LAT, QUARRY_LON, z);
         let (de, dn) = (e - 278_265.818, n - 6_206_860.195);
         assert!(
@@ -430,7 +527,10 @@ mod utm_tests {
     fn grid_distance_matches_ground_distance_near_the_meridian() {
         // Two points 1000 m apart in northing should be ~1000/k0 apart on the
         // ground. This catches a scale factor applied the wrong way round.
-        let z = Utm { zone: 56, north: false };
+        let z = Utm {
+            zone: 56,
+            north: false,
+        };
         let (e0, n0) = geodetic_to_utm(-34.0, 153.0, z);
         let (lat1, lon1) = utm_to_geodetic(e0, n0 + 1000.0, z);
         let a = geodetic_to_ecef(-34.0, 153.0, 0.0);

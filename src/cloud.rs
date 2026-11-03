@@ -145,7 +145,10 @@ pub fn load_dir(dir: &Path, per_tile_cap: Option<usize>) -> Result<Cloud> {
         .map(|e| e.path().to_path_buf())
         .filter(|p| {
             matches!(
-                p.extension().and_then(|s| s.to_str()).map(str::to_lowercase).as_deref(),
+                p.extension()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_lowercase)
+                    .as_deref(),
                 Some("ply") | Some("las")
             )
         })
@@ -204,18 +207,28 @@ pub fn read_anchor(dir: &Path) -> Option<Anchor> {
     }
 
     for path in candidates {
-        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
         let text = decode_maybe_utf16(&bytes);
-        let Some(at) = text.find("<SRSOrigin>") else { continue };
+        let Some(at) = text.find("<SRSOrigin>") else {
+            continue;
+        };
         let rest = &text[at + "<SRSOrigin>".len()..];
-        let Some(end) = rest.find("</SRSOrigin>") else { continue };
+        let Some(end) = rest.find("</SRSOrigin>") else {
+            continue;
+        };
         let nums: Vec<f64> = rest[..end]
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         if nums.len() >= 3 {
             // Terra writes this as longitude, latitude, height.
-            return Some(Anchor { lon: nums[0], lat: nums[1], h: nums[2] });
+            return Some(Anchor {
+                lon: nums[0],
+                lat: nums[1],
+                h: nums[2],
+            });
         }
     }
     None
@@ -223,11 +236,20 @@ pub fn read_anchor(dir: &Path) -> Option<Anchor> {
 
 fn decode_maybe_utf16(bytes: &[u8]) -> String {
     if bytes.len() >= 2 {
-        let (le, be) = (bytes[0] == 0xFF && bytes[1] == 0xFE, bytes[0] == 0xFE && bytes[1] == 0xFF);
+        let (le, be) = (
+            bytes[0] == 0xFF && bytes[1] == 0xFE,
+            bytes[0] == 0xFE && bytes[1] == 0xFF,
+        );
         if le || be {
             let units: Vec<u16> = bytes[2..]
                 .chunks_exact(2)
-                .map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) })
+                .map(|c| {
+                    if le {
+                        u16::from_le_bytes([c[0], c[1]])
+                    } else {
+                        u16::from_be_bytes([c[0], c[1]])
+                    }
+                })
                 .collect();
             return String::from_utf16_lossy(&units);
         }
@@ -263,7 +285,10 @@ pub fn place(
     let mut candidates: Vec<Candidate> = Vec::new();
 
     let f = *frame;
-    candidates.push(("the block's own coordinates", Box::new(move |p| Some(f.point(p)))));
+    candidates.push((
+        "the block's own coordinates",
+        Box::new(move |p| Some(f.point(p))),
+    ));
 
     // Absolute degrees, both axis orders.
     candidates.push((
@@ -695,7 +720,10 @@ mod tests {
     #[test]
     fn reads_binary_ply_with_colour() {
         let p = tmp("bin.ply");
-        write_binary_ply(&p, &[(1.0, 2.0, 3.0, 10, 20, 30), (4.0, 5.0, 6.0, 40, 50, 60)]);
+        write_binary_ply(
+            &p,
+            &[(1.0, 2.0, 3.0, 10, 20, 30), (4.0, 5.0, 6.0, 40, 50, 60)],
+        );
         let c = read_ply(&p).unwrap();
         assert_eq!(c.len(), 2);
         assert_eq!(c.points[1], Vec3::new(4.0, 5.0, 6.0));

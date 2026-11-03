@@ -235,7 +235,10 @@ mod tests {
 
         let found = block_xml(&root.join("Quarry Test 1")).unwrap();
         assert!(matches!(found, Found::Discovered(_)));
-        assert_eq!(found.path().file_name().unwrap(), "BlocksExchangeUndistortAT.xml");
+        assert_eq!(
+            found.path().file_name().unwrap(),
+            "BlocksExchangeUndistortAT.xml"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -248,7 +251,10 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
         std::fs::write(at.join("BlocksExchange.xml"), b"<x/>").unwrap();
 
-        assert!(block_xml(&deep).is_ok(), "should ascend to the sibling AT folder");
+        assert!(
+            block_xml(&deep).is_ok(),
+            "should ascend to the sibling AT folder"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -258,7 +264,10 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let err = block_xml(&root).unwrap_err().to_string();
         assert!(err.contains("no BlocksExchange XML"), "unhelpful: {err}");
-        assert!(err.contains("AT folder"), "must say what to look for: {err}");
+        assert!(
+            err.contains("AT folder"),
+            "must say what to look for: {err}"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -271,7 +280,10 @@ mod tests {
         std::fs::write(at.join("BlocksExchangeUndistortAT.xml"), b"<x/>").unwrap();
 
         let err = block_xml(&root).unwrap_err().to_string();
-        assert!(err.contains("BlocksExchangeAT.xml"), "must list them: {err}");
+        assert!(
+            err.contains("BlocksExchangeAT.xml"),
+            "must list them: {err}"
+        );
         assert!(err.contains("BlocksExchangeUndistortAT.xml"));
         std::fs::remove_dir_all(&root).ok();
     }

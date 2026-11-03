@@ -191,10 +191,7 @@ impl Block {
         if self.photos.is_empty() {
             return Vec3::ZERO;
         }
-        let sum = self
-            .photos
-            .iter()
-            .fold(Vec3::ZERO, |acc, p| acc + p.c);
+        let sum = self.photos.iter().fold(Vec3::ZERO, |acc, p| acc + p.c);
         sum / self.photos.len() as f64
     }
 
@@ -247,7 +244,9 @@ impl GroupBuilder {
     }
 
     fn finish(self, index: usize) -> Result<Photogroup> {
-        let width = self.width.context("photogroup is missing ImageDimensions/Width")?;
+        let width = self
+            .width
+            .context("photogroup is missing ImageDimensions/Width")?;
         let height = self
             .height
             .context("photogroup is missing ImageDimensions/Height")?;
@@ -602,11 +601,10 @@ mod tests {
 
     #[test]
     fn derives_pixel_focal_from_millimetres() {
-        let s = MINIMAL
-            .replace(
-                "<FocalLengthPixels>4000</FocalLengthPixels>",
-                "<FocalLength>12.29</FocalLength><SensorSize>17.3</SensorSize>",
-            );
+        let s = MINIMAL.replace(
+            "<FocalLengthPixels>4000</FocalLengthPixels>",
+            "<FocalLength>12.29</FocalLength><SensorSize>17.3</SensorSize>",
+        );
         let (b, _) = parse_str(&s).unwrap();
         let expect = 12.29 * 5472.0 / 17.3;
         assert!((b.groups[0].fx - expect).abs() < 1e-9);
