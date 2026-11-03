@@ -1,1 +1,17 @@
 /target
+
+# Artefacts a build or a run leaves behind. Anchored to the repository root,
+# where the name is ours alone, so a future tests/fixtures/*.ply stays
+# trackable.
+/*.zip
+/*.exe
+/*.pdb
+/*.ply
+/*.log
+/terrapin_out/
+
+# Editor and Explorer leftovers.
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

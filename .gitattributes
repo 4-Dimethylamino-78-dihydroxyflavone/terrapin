@@ -1,0 +1,5 @@
+# Normalise line endings to LF inside the repository, whatever each
+# contributor's core.autocrlf happens to be. Without this a Windows clone and
+# a Linux clone disagree about every line of every file, and src/frame.rs
+# really did end up CRLF while its eleven siblings stayed LF.
+* text=auto eol=lf
