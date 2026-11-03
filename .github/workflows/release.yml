@@ -47,19 +47,26 @@ jobs:
           ./target/release/terrapin.exe --version
           ./target/release/terrapin.exe --help
 
-      - name: Checksum
+      # Collected into one flat directory, so that both the run's artifact and
+      # the release carry the two files side by side. The checksum is written
+      # from inside dist/, so it names `terrapin.exe` with no path in front of
+      # it and `sha256sum -c terrapin.exe.sha256` works wherever the pair is
+      # unpacked.
+      - name: Package
         shell: bash
         run: |
-          sha256sum target/release/terrapin.exe | sed 's#target/release/##' > terrapin.exe.sha256
+          mkdir -p dist
+          cp target/release/terrapin.exe dist/
+          cd dist
+          sha256sum terrapin.exe > terrapin.exe.sha256
           cat terrapin.exe.sha256
+          ls -l
 
       - name: Attach to this run
         uses: actions/upload-artifact@v4
         with:
           name: terrapin-windows-x86_64
-          path: |
-            target/release/terrapin.exe
-            terrapin.exe.sha256
+          path: dist/
           if-no-files-found: error
 
       # gh is preinstalled on the runners, so cutting the release needs no
@@ -89,7 +96,7 @@ jobs:
                 certutil -hashfile terrapin.exe SHA256
         run: |
           gh release create "$TAG" \
-            target/release/terrapin.exe \
-            terrapin.exe.sha256 \
+            dist/terrapin.exe \
+            dist/terrapin.exe.sha256 \
             --title "terrapin $TAG" \
             --notes "$NOTES"

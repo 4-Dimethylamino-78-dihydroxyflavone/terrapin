@@ -9,6 +9,9 @@
 /*.ply
 /*.log
 /terrapin_out/
+# Where the release workflow stages terrapin.exe and its checksum. CI never
+# commits, but the same two commands are the way to package a build by hand.
+/dist/
 
 # Editor and Explorer leftovers.
 .vscode/
