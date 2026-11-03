@@ -1,5 +1,7 @@
 # terrapin
 
+[![CI](https://github.com/4-Dimethylamino-78-dihydroxyflavone/terrapin/actions/workflows/ci.yml/badge.svg)](https://github.com/4-Dimethylamino-78-dihydroxyflavone/terrapin/actions/workflows/ci.yml)
+
 Extract DJI Terra aerotriangulation blocks into open, portable formats.
 
 Terra's `AT` folder holds a solved photogrammetric block in Bentley's
@@ -12,6 +14,26 @@ pose.
 `terrapin` turns that into COLMAP, nerfstudio, Bundler, PLY, GeoJSON, KML or
 CSV — so the alignment can drive a Gaussian-splat trainer, a GIS, or a mesher,
 without a Terra licence and without re-running structure from motion.
+
+## Download
+
+[The latest release](https://github.com/4-Dimethylamino-78-dihydroxyflavone/terrapin/releases/latest) is one file, `terrapin.exe`, about
+2 MB. Copy it wherever you like and run it. There is no installer and nothing
+else to put on the machine — the C runtime is linked in, so it does not need
+the Visual C++ redistributable that most Windows programs do.
+
+The first run will bring up **"Windows protected your PC"**, because the file
+is not code-signed. Choose **More info**, then **Run anyway**. That warning is
+about the absence of a signature, not about anything found in the file.
+
+Every release carries `terrapin.exe.sha256` beside the executable, so you can
+confirm you have the file the build produced:
+
+```
+certutil -hashfile terrapin.exe SHA256
+```
+
+Or build it from source — see the bottom of this page.
 
 ## If you have never used a terminal
 

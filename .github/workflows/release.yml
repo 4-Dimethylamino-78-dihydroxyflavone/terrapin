@@ -1,0 +1,95 @@
+# Builds the single Windows executable and publishes it.
+#
+# The product is one file you copy to a laptop, but until now the only way to
+# obtain it was to install a Rust toolchain -- which the README's own audience
+# cannot reasonably be asked to do.
+#
+# Two ways in, deliberately:
+#   * pushing a tag like v0.1.0 builds, checksums and publishes a release;
+#   * running it by hand from the Actions tab builds and checksums, attaches
+#     the result to the run, and publishes nothing. That is how this workflow
+#     gets proved without putting a release on the repository.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Only the final step needs this, and only on a tag.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: terrapin.exe (x86_64 Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustc --version
+
+      # .cargo/config.toml links the C runtime statically for this target, so
+      # the result needs no Visual C++ redistributable on the far machine.
+      - name: Build
+        run: cargo build --release --locked
+
+      # Publishing a binary that cannot start is worse than publishing none.
+      - name: Smoke test
+        run: |
+          ./target/release/terrapin.exe --version
+          ./target/release/terrapin.exe --help
+
+      - name: Checksum
+        shell: bash
+        run: |
+          sha256sum target/release/terrapin.exe | sed 's#target/release/##' > terrapin.exe.sha256
+          cat terrapin.exe.sha256
+
+      - name: Attach to this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: terrapin-windows-x86_64
+          path: |
+            target/release/terrapin.exe
+            terrapin.exe.sha256
+          if-no-files-found: error
+
+      # gh is preinstalled on the runners, so cutting the release needs no
+      # third-party action. The tag and the notes both travel through the
+      # environment rather than being interpolated into the shell.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          NOTES: |
+            One file. Copy `terrapin.exe` anywhere and run it: no installer, no
+            Visual C++ redistributable, no Python, no PROJ or GDAL, no CUDA.
+
+            Double-click it, or drag a DJI Terra project folder onto it, and it
+            asks what to do in plain language. Enter takes the safe answer to
+            every question that has one.
+
+            **Windows will say "Windows protected your PC" the first time**,
+            because this executable is not code-signed. Choose **More info**,
+            then **Run anyway**.
+
+            To confirm you have the file that was built here, compare it with
+            `terrapin.exe.sha256`:
+
+                certutil -hashfile terrapin.exe SHA256
+        run: |
+          gh release create "$TAG" \
+            target/release/terrapin.exe \
+            terrapin.exe.sha256 \
+            --title "terrapin $TAG" \
+            --notes "$NOTES"

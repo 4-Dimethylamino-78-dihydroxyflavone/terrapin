@@ -1,0 +1,75 @@
+# The gates this repository is kept to. All four run locally with the same
+# commands, so a red run here means the tree really is broken rather than that
+# CI has its own opinions.
+#
+# No third-party actions and no build cache: GitHub's runners already ship
+# rustup, cargo, clippy and rustfmt, and a cold build of this crate is about
+# two minutes. A cache would be another moving part to debug on the day it
+# serves something stale.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both platforms report, rather than the first failure hiding the other.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustup component add clippy rustfmt
+          rustc --version
+          cargo --version
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      # --locked everywhere: every dependency is pinned exactly in Cargo.toml,
+      # so a run that silently resolved something else would not be testing
+      # what ships.
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --all --locked
+
+      - name: Release build
+        run: cargo build --release --locked
+
+  msrv:
+    name: rustc 1.88 (the declared floor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-version in Cargo.toml said 1.75 for months while the pinned
+      # image 0.25.10 required 1.88, so the floor could never have built. This
+      # job is here to keep that claim honest: it is the one thing a first-time
+      # reader following the README depends on and cannot check for themselves.
+      - name: Toolchain
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --no-self-update
+          rustup default 1.88.0
+          rustc --version
+
+      - name: Build on the floor
+        run: cargo build --locked
+
+      - name: Test on the floor
+        run: cargo test --all --locked
