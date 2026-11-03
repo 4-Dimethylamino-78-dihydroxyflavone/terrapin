@@ -174,20 +174,41 @@ enum Command {
     },
 }
 
-/// Whether this was a double-click, or a folder dropped onto the executable,
-/// rather than a command.
+/// The subcommand names, so that a bare one is never mistaken for a path.
+const SUBCOMMANDS: [&str; 5] = ["inspect", "export", "match", "cloud", "report"];
+
+/// Whether this was a double-click, or a file or folder dropped onto the
+/// executable, rather than a command.
 ///
 /// Explorer passes no arguments in the first case and exactly one existing
-/// directory in the second. Neither is a subcommand, so without this clap
-/// answers a beginner's very first attempt with a usage error and — the window
-/// being owned by the process — closes before it can be read.
+/// path in the second. Neither is a subcommand, so without this clap answers a
+/// beginner's very first attempt with a usage error and — the window being
+/// owned by the process — closes before it can be read.
 fn wizard_invocation() -> Option<Option<PathBuf>> {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    wizard_target(&args)
+}
+
+/// The decision itself, over an explicit argument list so it can be tested
+/// without starting a process.
+fn wizard_target(args: &[std::ffi::OsString]) -> Option<Option<PathBuf>> {
     match args.len() {
         0 => Some(None),
         1 => {
+            // A subcommand is a command even when a file or folder of the same
+            // name happens to sit in the working directory. Without this a
+            // directory called `export` alongside would send `terrapin export`
+            // into the walkthrough instead of reporting the missing arguments.
+            if SUBCOMMANDS.iter().any(|s| args[0] == *s) {
+                return None;
+            }
             let p = PathBuf::from(&args[0]);
-            if p.is_dir() {
+            // Explorer hands over a directory for a folder and the file itself
+            // for anything else. The file worth dropping is the BlocksExchange
+            // XML, which is precisely what find.rs asks the user to name when a
+            // project holds more than one block; block_xml resolves it, and
+            // explains itself for any other file.
+            if p.is_dir() || p.is_file() {
                 Some(Some(p))
             } else {
                 None
@@ -250,7 +271,19 @@ fn main() -> Result<()> {
         std::process::exit(if outcome.is_ok() { 0 } else { 1 });
     }
 
-    let cli = Cli::parse();
+    // try_parse rather than parse: clap exits the process itself, and from
+    // Explorer that destroys the window with the usage message still in it —
+    // the very failure ui::pause exists to prevent. A wrong drag (two folders
+    // at once, a path that no longer exists) lands here. pause() no-ops when
+    // stdin is not a terminal, so pipes and CI are unaffected.
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = e.print();
+            ui::pause();
+            std::process::exit(e.exit_code());
+        }
+    };
     match cli.command {
         Command::Inspect { xml, verbose } => cmd_inspect(&xml, verbose),
         Command::Export {
@@ -500,7 +533,9 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
     println!("  extent            {:.2} x {:.2} x {:.2} m", e.x, e.y, e.z);
 
     // ---- the images themselves ------------------------------------------
-    if !images.is_empty() {
+    let staged = if images.is_empty() {
+        0
+    } else {
         let at = xml.parent().unwrap_or(std::path::Path::new("."));
         stage_images(
             &mut block,
@@ -512,8 +547,8 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
             quality,
             max_distance,
             overwrite,
-        )?;
-    }
+        )?
+    };
 
     let needs_geo = formats.iter().any(|f| f.needs_georeference());
     if needs_geo && !local.is_georeferenced() {
@@ -671,11 +706,27 @@ fn cmd_export(given: &std::path::Path, run: ExportRun) -> Result<()> {
     std::fs::write(&gpath, serde_json::to_string_pretty(&georef)?)?;
     println!("  {:<14}  {}", "metadata", gpath.display());
 
-    println!(
-        "\n  Put the images in {} and point a trainer at {}\n",
-        out.join("images").display(),
-        out.display()
-    );
+    // The one sentence a beginner acts on after a successful run. Printed
+    // unconditionally, it told them to copy the originals into the very folder
+    // staging had just filled with rebuilt undistorted frames — inviting them
+    // to overwrite correct output with the distorted originals.
+    if staged > 0 {
+        println!(
+            "\n  {} image(s) are already in {}. Point a trainer at {}\n",
+            thousands(staged),
+            out.join("images").display(),
+            out.display()
+        );
+    } else {
+        println!(
+            "\n  No images were staged. An UndistortAT block refers to copies Terra made \
+             inside its own temp folder, which does not travel with the project.\n  \
+             To add them, re-run with --images <the DCIM folder off the card>, or answer \
+             yes to the photographs question in the guided run.\n  \
+             Point a trainer at {}\n",
+            out.display()
+        );
+    }
     Ok(())
 }
 
@@ -685,13 +736,19 @@ fn describe_match(
     block: &Block,
     m: &stage::MatchReport,
     images: &[stage::SourceImage],
-    skipped: usize,
+    scan: stage::ScanSummary,
     card: Option<stage::CardCheck>,
 ) {
     rule("photographs");
     println!("  found             {}", images.len());
-    if skipped > 0 {
-        println!("  without GPS       {skipped} (skipped)");
+    if scan.without_gps > 0 {
+        println!("  without GPS       {} (skipped)", scan.without_gps);
+    }
+    if scan.without_altitude > 0 {
+        println!(
+            "  without altitude  {} (matched horizontally)",
+            scan.without_altitude
+        );
     }
     let fixed = stage::rtk_fixed_count(images);
     println!("  RTK fixed         {} of {}", fixed, images.len());
@@ -726,8 +783,41 @@ fn describe_match(
     if m.surplus_images > 0 {
         println!("  unused photos     {}", m.surplus_images);
     }
+    if m.vertical_offset_m.abs() >= 0.01 {
+        println!(
+            "  height offset     {:+.2} m (removed before matching)",
+            m.vertical_offset_m
+        );
+    }
+
+    // With nothing matched every offset below is NaN, and NaN > 10.0 is false:
+    // that is how this used to print "photographs line up with the solved
+    // positions" directly under "matched to poses 0".
+    if m.matched == 0 {
+        warn(
+            "not one photograph was matched to a pose. Either --images points at a \
+             different flight than this block was solved from, or the photographs' \
+             altitudes and the block's heights are in different vertical datums",
+        );
+        return;
+    }
+
     println!("  median offset     {:.2} m", m.median_distance_m);
     println!("  worst offset      {:.2} m", m.worst_distance_m);
+
+    // A geoid separation is tens of metres; GNSS noise and a little terrain are
+    // not. The offset has been removed so the pairing can work, so say so, or
+    // the reader never learns their vertical datums disagree.
+    if m.vertical_offset_m.abs() > 3.0 {
+        warn(&format!(
+            "the photographs sat {:+.1} m from the block vertically, which is the size of \
+             a geoid separation rather than of GNSS error: the block's heights and the \
+             aircraft's altitudes are in different vertical datums. The offset was \
+             removed so the pairing could proceed, and the horizontal positions are \
+             unaffected",
+            m.vertical_offset_m
+        ));
+    }
 
     // Shots are ~23 m apart on a normal grid flight while GNSS error is a
     // couple of metres, so a median in the tens of metres means the pairing has
@@ -756,13 +846,27 @@ fn stage_images(
     quality: u8,
     max_distance: f64,
     overwrite: bool,
-) -> Result<()> {
+) -> Result<usize> {
     let calib = stage::calibration_from_report(at_dir)?;
 
-    let (found, skipped) = stage::scan_images(images)?;
+    let (found, scan) = stage::scan_images(images)?;
     let card = stage::check_against_mrk(images, &found);
     let m = stage::match_by_position(block, local, &found, max_distance)?;
-    describe_match(block, &m, &found, skipped, card);
+    describe_match(block, &m, &found, scan, card);
+
+    // Both staging paths have to refuse this identically. undistort_into bails
+    // of its own accord when no pose has an image, but copying the originals
+    // did not: that path reported "written 0" and then exported happily,
+    // leaving every images.txt entry naming a file that was never staged.
+    if m.matched == 0 {
+        bail!(
+            "not one photograph was matched to a pose, so there is nothing to stage.\n\
+             Either --images points at a different flight than this block was solved \
+             from, or the photographs' altitudes and the block's heights are in \
+             different vertical datums.\n\
+             `terrapin match` against the same folder prints both offsets."
+        );
+    }
 
     rule("images");
     let opts = stage::StageOptions {
@@ -847,7 +951,7 @@ fn stage_images(
             );
         }
     }
-    Ok(())
+    Ok(report.written)
 }
 
 fn cmd_match(given: &std::path::Path, images: &[PathBuf], max_distance: f64) -> Result<()> {
@@ -858,10 +962,10 @@ fn cmd_match(given: &std::path::Path, images: &[PathBuf], max_distance: f64) -> 
     block.normalize_orientation();
     let local = LocalFrame::build_and_apply(&mut block);
 
-    let (found, skipped) = stage::scan_images(images)?;
+    let (found, scan) = stage::scan_images(images)?;
     let card = stage::check_against_mrk(images, &found);
     let m = stage::match_by_position(&block, &local, &found, max_distance)?;
-    describe_match(&block, &m, &found, skipped, card);
+    describe_match(&block, &m, &found, scan, card);
     println!("\n  (match only — nothing written)\n");
     Ok(())
 }
@@ -1012,5 +1116,49 @@ mod tests {
             }
             _ => panic!("wrong subcommand"),
         }
+    }
+
+    #[test]
+    fn a_subcommand_is_never_taken_for_a_path() {
+        // A folder called `export` beside the executable would otherwise send
+        // `terrapin export` into the walkthrough instead of reporting the
+        // arguments it was missing.
+        for name in SUBCOMMANDS {
+            assert!(
+                wizard_target(&[std::ffi::OsString::from(name)]).is_none(),
+                "{name} was taken for a path"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dropped_file_or_folder_opens_the_walkthrough() {
+        // Explorer hands over the file itself for anything that is not a
+        // folder, and the file worth dropping is the BlocksExchange XML that
+        // find.rs asks for by name when a project holds more than one block.
+        // Dropping it used to end at a clap usage error in a window that shut
+        // before it could be read.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for p in [root.join("Cargo.toml"), root.join("src")] {
+            assert_eq!(
+                wizard_target(&[std::ffi::OsString::from(p.as_os_str())]),
+                Some(Some(p.clone())),
+                "{} should have opened the walkthrough",
+                p.display()
+            );
+        }
+    }
+
+    #[test]
+    fn everything_else_is_left_to_clap() {
+        // No arguments at all is a double-click.
+        assert_eq!(wizard_target(&[]), Some(None));
+        // A path that does not exist is a typed mistake rather than a drop, so
+        // clap's message, which names the subcommand it wanted, is the better
+        // answer. main now prints and pauses on it either way.
+        assert!(wizard_target(&[std::ffi::OsString::from("no\\such\\place")]).is_none());
+        // Two folders selected at once.
+        let d = std::ffi::OsString::from(env!("CARGO_MANIFEST_DIR"));
+        assert!(wizard_target(&[d.clone(), d]).is_none());
     }
 }

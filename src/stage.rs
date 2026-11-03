@@ -161,6 +161,11 @@ pub struct SourceImage {
     pub lat: f64,
     pub lon: f64,
     pub alt: f64,
+    /// False when the packet carried no `AbsoluteAltitude`. `alt` is then 0.0,
+    /// which is sea level rather than a missing value, so such an image can
+    /// only be compared horizontally -- and the report has to say which field
+    /// was absent, or the reader is sent to look at the pairing instead.
+    pub alt_known: bool,
     /// The sequence number out of `DJI_<timestamp>_<index>_V.JPG`, when present.
     pub index: Option<u32>,
     pub rtk_fixed: bool,
@@ -233,18 +238,31 @@ fn read_xmp(path: &Path) -> Result<Option<SourceImage>> {
         lat,
         lon,
         alt: alt.unwrap_or(0.0),
+        alt_known: alt.is_some(),
         index: index_from_name(path),
         rtk_fixed: xmp_number(&text, "drone-dji:RtkFlag").map(|v| v as i64) == Some(50),
     }))
 }
 
+/// What a scan of the card turned up besides the images themselves.
+///
+/// Two separate absences, because they send the reader to different places: no
+/// position at all means the photograph cannot be placed, while a position
+/// without an altitude can still be matched on the horizontal.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScanSummary {
+    /// Files whose packet carried no usable latitude and longitude.
+    pub without_gps: usize,
+    /// Images that recorded a position but no `AbsoluteAltitude`.
+    pub without_altitude: usize,
+}
+
 /// Find every JPEG beneath the given roots and read its recorded position.
 ///
-/// Returns the images found and how many were skipped for want of a usable
-/// packet. A photograph without GPS is not an error — screenshots, panoramas
-/// and hand-held shots all end up on the same card — it simply cannot be
-/// matched and is left out.
-pub fn scan_images(roots: &[PathBuf]) -> Result<(Vec<SourceImage>, usize)> {
+/// Returns the images found and what was missing from the rest. A photograph
+/// without GPS is not an error — screenshots, panoramas and hand-held shots
+/// all end up on the same card — it simply cannot be matched and is left out.
+pub fn scan_images(roots: &[PathBuf]) -> Result<(Vec<SourceImage>, ScanSummary)> {
     let mut files: Vec<PathBuf> = Vec::new();
     for root in roots {
         if !root.exists() {
@@ -282,8 +300,14 @@ pub fn scan_images(roots: &[PathBuf]) -> Result<(Vec<SourceImage>, usize)> {
         .map(|p| read_xmp(p).unwrap_or(None))
         .collect();
 
-    let skipped = results.iter().filter(|r| r.is_none()).count();
-    Ok((results.into_iter().flatten().collect(), skipped))
+    let summary = ScanSummary {
+        without_gps: results.iter().filter(|r| r.is_none()).count(),
+        without_altitude: results
+            .iter()
+            .filter(|r| r.as_ref().is_some_and(|i| !i.alt_known))
+            .count(),
+    };
+    Ok((results.into_iter().flatten().collect(), summary))
 }
 
 /// DJI's `.MRK` RTK event table: index, latitude, longitude, ellipsoidal height.
@@ -399,6 +423,66 @@ pub struct MatchReport {
     pub worst_distance_m: f64,
     /// Images that were within range of some pose but lost it to a closer one.
     pub surplus_images: usize,
+    /// The constant height difference removed before matching, in metres. A
+    /// non-zero value means the block's vertical datum and the aircraft's
+    /// altitudes disagree; horizontal positions are untouched either way.
+    pub vertical_offset_m: f64,
+}
+
+/// The distance that decides a pair: the full 3D separation where the
+/// photograph recorded an altitude, the horizontal one where it did not.
+///
+/// Keeping the vertical term is what stops a nadir pass and an oblique pass
+/// over the same ground from swapping photographs. Dropping it where there is
+/// no altitude is better than comparing against an assumed sea level, which
+/// can never come within the distance budget.
+fn pair_distance(v: Vec3, alt_known: bool) -> f64 {
+    if alt_known {
+        v.length()
+    } else {
+        (v.x * v.x + v.y * v.y).sqrt()
+    }
+}
+
+/// The median signed height difference between each photograph and the pose
+/// nearest it horizontally, over those pairs that already agree horizontally.
+///
+/// Horizontal agreement is what identifies the flight; the vertical is what
+/// carries the datum. Restricting the estimate to pairs inside the horizontal
+/// budget is the load-bearing part: an unrelated card produces no offset at
+/// all, so pointing `--images` at the wrong flight still fails loudly rather
+/// than being shifted into a false agreement. The median rather than the mean
+/// keeps a handful of wild altitudes from dragging the result.
+fn estimate_vertical_offset(
+    block: &Block,
+    local: &[Vec3],
+    images: &[SourceImage],
+    max_distance_m: f64,
+) -> f64 {
+    let mut deltas: Vec<f64> = Vec::new();
+    for (l, img) in local.iter().zip(images) {
+        if !img.alt_known {
+            continue;
+        }
+        let mut nearest = f64::INFINITY;
+        let mut dz = 0.0;
+        for photo in &block.photos {
+            let (dx, dy) = (l.x - photo.c.x, l.y - photo.c.y);
+            let horizontal = (dx * dx + dy * dy).sqrt();
+            if horizontal < nearest {
+                nearest = horizontal;
+                dz = l.z - photo.c.z;
+            }
+        }
+        if nearest <= max_distance_m {
+            deltas.push(dz);
+        }
+    }
+    if deltas.is_empty() {
+        return 0.0;
+    }
+    deltas.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    deltas[deltas.len() / 2]
 }
 
 /// Pair every pose with the photograph taken from it.
@@ -430,12 +514,34 @@ pub fn match_by_position(
              not a UTM zone. Supply already-matching images instead.",
         )?;
 
+    // The block's heights and the aircraft's altitudes need not share a
+    // vertical datum. frame.rs passes a projected block's own vertical axis
+    // straight through, while AbsoluteAltitude is the aircraft's own figure,
+    // and the difference between them is the geoid separation: about +20 m in
+    // south-east Australia, +50 m in the UK, -30 m across much of the USA. A
+    // constant bias that size exhausts the whole distance budget for every
+    // candidate pair at once, so nothing matches and the failure names the
+    // matcher rather than the heights. The quarry validation could not catch
+    // this, because the two datums happen to agree closely there.
+    let vertical_offset_m = estimate_vertical_offset(block, &local, images, max_distance_m);
+    let local: Vec<Vec3> = local
+        .iter()
+        .zip(images)
+        .map(|(l, img)| {
+            if img.alt_known {
+                Vec3::new(l.x, l.y, l.z - vertical_offset_m)
+            } else {
+                *l
+            }
+        })
+        .collect();
+
     // Candidate pairs within range. Capping by distance keeps this far below
     // the n^2 worst case for any real flight.
     let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
     for (pi, photo) in block.photos.iter().enumerate() {
         for (ii, l) in local.iter().enumerate() {
-            let d = (*l - photo.c).length();
+            let d = pair_distance(*l - photo.c, images[ii].alt_known);
             if d <= max_distance_m {
                 pairs.push((d, pi, ii));
             }
@@ -473,6 +579,7 @@ pub fn match_by_position(
         median_distance_m: median,
         worst_distance_m: distances.last().copied().unwrap_or(f64::NAN),
         surplus_images: images.len().saturating_sub(matched),
+        vertical_offset_m,
     })
 }
 
@@ -944,5 +1051,97 @@ Camera Model M4E_WideCamera
         assert_eq!(rows[1].0, 3, "the missing capture must not be invented");
         assert!((rows[0].1 - -34.26054415).abs() < 1e-9);
         std::fs::remove_file(p).ok();
+    }
+
+    // ---- the vertical datum ------------------------------------------------
+
+    /// A block whose poses sit at the given local centres. Only `c` reaches the
+    /// offset estimator, so the rest is filler.
+    fn poses(centres: &[Vec3]) -> Block {
+        Block {
+            photos: centres
+                .iter()
+                .enumerate()
+                .map(|(i, c)| crate::block::Photo {
+                    id: i as u32,
+                    group: 0,
+                    path: format!("pose_{i}.JPG"),
+                    r: crate::math::Mat3::IDENTITY,
+                    c: *c,
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn photo_with(alt_known: bool) -> SourceImage {
+        SourceImage {
+            path: PathBuf::from("DJI_0001.JPG"),
+            lat: 0.0,
+            lon: 0.0,
+            alt: 0.0,
+            alt_known,
+            index: None,
+            rtk_fixed: false,
+        }
+    }
+
+    #[test]
+    fn a_constant_height_bias_is_measured_rather_than_matched_around() {
+        // What a geoid separation looks like from here: the photographs agree
+        // horizontally to within GNSS error and sit a flat 48.6 m above the
+        // block, which is more than the whole 25 m distance budget.
+        let block = poses(&[
+            Vec3::new(0.0, 0.0, 100.0),
+            Vec3::new(30.0, 0.0, 100.0),
+            Vec3::new(60.0, 0.0, 100.0),
+        ]);
+        let local = [
+            Vec3::new(0.5, 0.0, 148.6),
+            Vec3::new(30.4, 0.0, 148.6),
+            Vec3::new(59.6, 0.0, 148.6),
+        ];
+        let images: Vec<SourceImage> = (0..3).map(|_| photo_with(true)).collect();
+        let off = estimate_vertical_offset(&block, &local, &images, 25.0);
+        assert!((off - 48.6).abs() < 1e-9, "offset was {off}");
+    }
+
+    #[test]
+    fn an_unrelated_flight_produces_no_offset_at_all() {
+        // The load-bearing case. Taking an offset from pairs that do not even
+        // agree horizontally would shift the wrong card into a false
+        // agreement, turning a loud and correct refusal into a dataset that
+        // trains to a blur.
+        let block = poses(&[Vec3::new(0.0, 0.0, 100.0), Vec3::new(30.0, 0.0, 100.0)]);
+        let local = [
+            Vec3::new(2_000.0, 0.0, 148.6),
+            Vec3::new(2_030.0, 0.0, 148.6),
+        ];
+        let images: Vec<SourceImage> = (0..2).map(|_| photo_with(true)).collect();
+        assert_eq!(
+            estimate_vertical_offset(&block, &local, &images, 25.0),
+            0.0,
+            "a flight 2 km away must not contribute a height offset"
+        );
+    }
+
+    #[test]
+    fn a_photograph_without_an_altitude_is_left_out_of_the_estimate() {
+        // Its `alt` is 0.0 meaning absent, not sea level. Counting it would
+        // drag the offset by the whole elevation of the site.
+        let block = poses(&[Vec3::new(0.0, 0.0, 100.0), Vec3::new(30.0, 0.0, 100.0)]);
+        let local = [Vec3::new(0.0, 0.0, 148.6), Vec3::new(30.0, 0.0, 0.0)];
+        let images = vec![photo_with(true), photo_with(false)];
+        let off = estimate_vertical_offset(&block, &local, &images, 25.0);
+        assert!((off - 48.6).abs() < 1e-9, "offset was {off}");
+    }
+
+    #[test]
+    fn height_counts_except_where_no_altitude_was_recorded() {
+        // Keeping the vertical term is what stops a nadir pass and an oblique
+        // pass over the same ground from swapping photographs.
+        let v = Vec3::new(3.0, 4.0, 40.0);
+        assert!((pair_distance(v, false) - 5.0).abs() < 1e-12);
+        assert!((pair_distance(v, true) - 1625.0_f64.sqrt()).abs() < 1e-12);
     }
 }
