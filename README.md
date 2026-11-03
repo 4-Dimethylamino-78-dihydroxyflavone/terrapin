@@ -289,4 +289,15 @@ divides by zero.
 
 ## Licence
 
-MIT OR Apache-2.0.
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT licence ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
+
+### Contribution
+
+Unless you state otherwise, any contribution you intentionally submit for
+inclusion in this work, as defined in the Apache-2.0 licence, shall be dual
+licensed as above, without any additional terms or conditions.
