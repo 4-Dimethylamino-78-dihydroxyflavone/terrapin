@@ -806,8 +806,8 @@ mod tests {
             .split_whitespace()
             .map(|v| v.parse().unwrap())
             .collect();
-        for j in 0..3 {
-            assert!((got[j] - want.m[0][j]).abs() < 1e-9);
+        for (j, g) in got.iter().enumerate().take(3) {
+            assert!((g - want.m[0][j]).abs() < 1e-9);
         }
         let list = fs::read_to_string(dir.join("list.txt")).unwrap();
         assert_eq!(list.lines().count(), 3);

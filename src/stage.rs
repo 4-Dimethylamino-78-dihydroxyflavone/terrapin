@@ -667,7 +667,7 @@ pub fn undistort_into(
             let dest = dir.join(&name);
 
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 100 == 0 || n == total {
+            if n.is_multiple_of(100) || n == total {
                 eprintln!("  undistorting {n} of {total}");
             }
 

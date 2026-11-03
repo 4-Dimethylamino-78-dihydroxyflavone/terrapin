@@ -198,7 +198,7 @@ impl Mat3 {
     }
 
     /// Quaternion as (w, x, y, z). Shepperd's branch-stable method.
-    pub fn to_quat(&self) -> [f64; 4] {
+    pub fn to_quat(self) -> [f64; 4] {
         let m = &self.m;
         let (m00, m01, m02) = (m[0][0], m[0][1], m[0][2]);
         let (m10, m11, m12) = (m[1][0], m[1][1], m[1][2]);
@@ -224,7 +224,7 @@ impl Mat3 {
 
     /// Euler angles (omega, phi, kappa) in degrees, from a rotation matrix.
     /// Inverse of [`from_opk`], used for the CSV pose table.
-    pub fn to_opk_degrees(&self) -> (f64, f64, f64) {
+    pub fn to_opk_degrees(self) -> (f64, f64, f64) {
         // from_opk builds camera-to-world as Rx(omega) * Ry(phi) * Rz(kappa),
         // then transposes. Undo the transpose, then decompose in that order:
         //

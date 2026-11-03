@@ -507,8 +507,8 @@ fn read_ply(path: &Path) -> Result<Cloud> {
                 .collect();
 
             // Read in blocks rather than per-vertex: a 20-million-point tile
-            // is 40k syscalls at 512 vertices per read, versus 20 million.
-            let per_block = 8192.max(1);
+            // is about 2,400 reads at 8192 vertices per read, versus 20 million.
+            let per_block = 8192;
             let mut buf = vec![0u8; stride * per_block];
             let mut remaining = count;
             while remaining > 0 {

@@ -313,12 +313,7 @@ struct PhotoBuilder {
 impl PhotoBuilder {
     fn rotation(&self) -> Option<Mat3> {
         if self.matrix.iter().all(|r| r.iter().all(Option::is_some)) {
-            let mut m = [[0.0f64; 3]; 3];
-            for i in 0..3 {
-                for j in 0..3 {
-                    m[i][j] = self.matrix[i][j].unwrap();
-                }
-            }
+            let m = self.matrix.map(|row| row.map(|v| v.unwrap()));
             return Some(Mat3::from_rows(m).orthonormalize());
         }
         if let (Some(o), Some(p), Some(k)) = (self.omega, self.phi, self.kappa) {

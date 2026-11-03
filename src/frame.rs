@@ -303,7 +303,7 @@ impl LocalFrame {
     /// ellipsoidal or orthometric, so this is the block's height, not a
     /// WGS84 ellipsoidal height — the horizontal position is authoritative,
     /// the vertical carries whatever datum the survey used.
-    pub fn to_geodetic(&self, local: Vec3) -> Option<(f64, f64, f64)> {
+    pub fn to_geodetic(self, local: Vec3) -> Option<(f64, f64, f64)> {
         match self.source {
             SourceFrame::Projected => {
                 let zone = self.utm?;
@@ -503,48 +503,6 @@ mod tests {
         (b, truth)
     }
 
-    /// The Quarry site's own grid origin, in UTM zone 56S metres — the number
-    /// Terra recentred that block on. Paired with (-34.254729862,
-    /// 150.591903267) in geodesy's tests, so the two modules can be checked
-    /// against each other rather than against themselves.
-    const QUARRY_EASTING: f64 = 278_265.818;
-    const QUARRY_NORTHING: f64 = 6_206_860.195;
-    const QUARRY_LAT: f64 = -34.254_729_862;
-    const QUARRY_LON: f64 = 150.591_903_267;
-
-    /// A projected block sitting on the Quarry grid. `srs` is the Definition
-    /// string Terra would have written, or `None` for a block that declares
-    /// no spatial reference at all.
-    fn projected_block(srs: Option<&str>) -> Block {
-        let mut b = Block {
-            groups: vec![group()],
-            ..Default::default()
-        };
-        if let Some(definition) = srs {
-            b.srs.push(crate::block::Srs {
-                id: "0".into(),
-                name: "WGS 84 / UTM zone 56S".into(),
-                definition: definition.into(),
-            });
-        }
-        // 3x3 flight grid, symmetric about the origin so the centroid is the
-        // grid origin itself and the geodetic checks below have a known answer.
-        for i in 0..9u32 {
-            let (gx, gy) = ((i % 3) as f64 - 1.0, (i / 3) as f64 - 1.0);
-            b.photos.push(Photo {
-                id: i,
-                group: 0,
-                path: format!("DJI_{i:04}.JPG"),
-                r: Mat3::from_opk(3.0, -2.0, 91.0).orthonormalize(),
-                c: Vec3::new(
-                    QUARRY_EASTING + gx * 137.5,
-                    QUARRY_NORTHING + gy * 137.5,
-                    453.305 + i as f64 * 0.7,
-                ),
-            });
-        }
-        b
-    }
 
     #[test]
     fn detects_ecef_from_srs_string() {
