@@ -17,10 +17,10 @@ without a Terra licence and without re-running structure from motion.
 
 ## Download
 
-[The latest release](https://github.com/4-Dimethylamino-78-dihydroxyflavone/terrapin/releases/latest) is one file, `terrapin.exe`, about
-2 MB. Copy it wherever you like and run it. There is no installer and nothing
-else to put on the machine — the C runtime is linked in, so it does not need
-the Visual C++ redistributable that most Windows programs do.
+[The latest release][latest] is one file, `terrapin.exe`, about 2 MB. Copy it
+wherever you like and run it. There is no installer and nothing else to put on
+the machine — the C runtime is linked in, so it does not need the Visual C++
+redistributable that most Windows programs do.
 
 The first run will bring up **"Windows protected your PC"**, because the file
 is not code-signed. Choose **More info**, then **Run anyway**. That warning is
@@ -33,7 +33,9 @@ confirm you have the file the build produced:
 certutil -hashfile terrapin.exe SHA256
 ```
 
-Or build it from source — see the bottom of this page.
+Or build it from source — see [Build](#build), below.
+
+[latest]: https://github.com/4-Dimethylamino-78-dihydroxyflavone/terrapin/releases/latest
 
 ## If you have never used a terminal
 
@@ -291,11 +293,11 @@ will rescue it — re-align instead.
 cargo test
 ```
 
-The load-bearing ones are `frame::tests::reprojection_survives_the_frame_change`,
-which asserts a world point lands on the same pixel before and after the change
-of frame, and `math::tests::quat_roundtrip_is_exact`, which exercises every
-branch of
-the quaternion conversion including the 180° cases where the naive formula
+The load-bearing ones are
+`frame::tests::reprojection_survives_the_frame_change`, which asserts a world
+point lands on the same pixel before and after the change of frame, and
+`math::tests::quat_roundtrip_is_exact`, which exercises every branch of the
+quaternion conversion including the 180° cases where the naive formula
 divides by zero.
 
 ## Limits
